@@ -4,7 +4,6 @@ import { queryPharmacies } from "@/lib/pharmacies";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    console.log("Search Request Body:", body);
 
     const medicineName = body.medicineName || body.medicine || "دواء غير محدد";
     const userLat = Number(body.userLat || body.lat || 30.9753);
@@ -17,16 +16,13 @@ export async function POST(request: Request) {
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
     if (!botToken) {
-      console.error("TELEGRAM_BOT_TOKEN is missing!");
       return NextResponse.json(
-        { success: false, message: "توكن البوت غير معرف في متغيرات البيئة" },
+        { success: false, message: "توكن البوت غير معرف" },
         { status: 500 }
       );
     }
 
-    // 1️⃣ البحث عن الصيدليات المسجلة ضمن النطاق
     const targetPharmacies = queryPharmacies(userLat, userLng, radiusKm);
-    console.log(`Found ${targetPharmacies.length} pharmacies within range.`);
 
     if (targetPharmacies.length === 0) {
       return NextResponse.json({
@@ -35,7 +31,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // 2️⃣ تعيين حالة الطلب المبدئية (pending) في Upstash Redis
+    // تعيين حالة الطلب المبدئية
     if (redisUrl && redisToken) {
       const initialPayload = JSON.stringify({
         status: "pending",
@@ -50,7 +46,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3️⃣ إرسال الرسالة مع الأزرار التفاعلية المحدثة بفاصل (|) إلى التليجرام
+    // إرسال الرسالة مع استخدام الفاصل | لمنع تشتت المعرف
     const sendPromises = targetPharmacies.map(async (pharmacy) => {
       const messageText =
         `🔍 *استعلام جديد عن دواء*\n\n` +

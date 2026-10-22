@@ -11,29 +11,16 @@ export async function POST(request: Request) {
       const chatId = callbackQuery.message.chat.id;
       const messageId = callbackQuery.message.message_id;
 
-      // 1. تفكيك البيانات: avail_REQ_123456_pharma1
-      const parts = callbackData.split("_");
-      const action = parts[0]; 
-      
-      // إعطاء أولوية لاستخراج رقم الطلب المبتدئ بـ REQ_
-      let requestId = "";
-      for (const part of parts) {
-        if (part.startsWith("REQ")) {
-          requestId = part;
-          break;
-        }
-      }
-      
-      // إذا لم يجد بادئة REQ يأخذ العنصر الثاني تلقائياً
-      if (!requestId && parts.length > 1) {
-        requestId = parts[1];
-      }
+      // تفكيك باستخدام الفاصل |
+      const parts = callbackData.split("|");
+      const action = parts[0];
+      const requestId = parts[1];
+      const pharmacyId = parts[2];
 
-      const pharmacyId = parts[parts.length - 1];
       const isAvailable = action === "avail";
       const statusValue = isAvailable ? "available" : "unavailable";
 
-      let pharmacyName = "صيدلية الدواء";
+      let pharmacyName = "صيدلية قريبة";
       if (pharmacyId) {
         const matched = PHARMACIES_DATABASE.find((p) => p.id === pharmacyId);
         if (matched) {
@@ -41,31 +28,27 @@ export async function POST(request: Request) {
         }
       }
 
-      // 2. الحفظ المباشر في Redis بأسلوب ينظف النصوص
       const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
       const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
+      // التخزين الصريح بالرمز الدقيق لـ requestId
       if (redisUrl && redisToken && requestId) {
-        const payloadData = {
+        const payloadData = JSON.stringify({
           status: statusValue,
           pharmacyName: pharmacyName,
-        };
-
-        // إرسال Payload صريح لـ Upstash REST
-        await fetch(`${redisUrl}/set/${requestId}`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${redisToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(JSON.stringify(payloadData)),
         });
+
+        await fetch(
+          `${redisUrl}/set/${requestId}/${encodeURIComponent(payloadData)}?EX=7200`,
+          {
+            headers: { Authorization: `Bearer ${redisToken}` },
+          }
+        );
       }
 
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
       if (botToken) {
-        // إغلاق مؤشر التحميل والتعديل في التليجرام
         await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

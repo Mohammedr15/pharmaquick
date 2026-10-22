@@ -25,8 +25,8 @@ export async function GET(request: Request) {
 
     if (data && data.result) {
       let parsed = data.result;
-      
-      // تفكيك سلسلة JSON النصية المزدوجة إن وجدت
+
+      // فك التغليف المزدوج لـ JSON
       if (typeof parsed === "string") {
         try {
           parsed = JSON.parse(parsed);
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
             parsed = JSON.parse(parsed);
           }
         } catch {
-          // متسامح مع أي أخطاء تحويل
+          // في حال النص العادي
         }
       }
 

@@ -4,7 +4,6 @@ import { PHARMACIES_DATABASE } from "@/lib/pharmacies";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    console.log("📩 [DEBUG Webhook] تم استقبال طلب من التليجرام:", JSON.stringify(body));
 
     if (body && body.callback_query) {
       const callbackQuery = body.callback_query;
@@ -12,7 +11,7 @@ export async function POST(request: Request) {
       const chatId = callbackQuery.message.chat.id;
       const messageId = callbackQuery.message.message_id;
 
-      // تفكيك البيانات المدمجة بالفاصل |
+      // تفكيك البيانات بالفاصل |
       const parts = callbackData.split("|");
       const action = parts[0];
       const requestId = parts[1];
@@ -32,26 +31,24 @@ export async function POST(request: Request) {
       const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
       const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-      // الحفظ الفوري المباشر لتحديث الحالة من pending إلى available/unavailable
+      // تحديث الحالة في Redis
       if (redisUrl && redisToken && requestId) {
         const payloadData = JSON.stringify({
           status: statusValue,
           pharmacyName: pharmacyName,
         });
 
-        const saveRes = await fetch(
+        await fetch(
           `${redisUrl}/set/${requestId}/${encodeURIComponent(payloadData)}?EX=7200`,
           {
             headers: { Authorization: `Bearer ${redisToken}` },
           }
         );
-        console.log("💾 [DEBUG Webhook] نتيجة الحفظ في Redis:", await saveRes.json());
       }
 
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
       if (botToken) {
-        // إغلاق مؤشر التحميل في التليجرام
         await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -61,7 +58,6 @@ export async function POST(request: Request) {
           }),
         });
 
-        // تعديل نص الرسالة في التليجرام ليرى الصيدلي أنه رد
         await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -79,7 +75,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
-    console.error("❌ [DEBUG Webhook] خطأ:", error);
+    console.error("Webhook Error:", error);
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 }

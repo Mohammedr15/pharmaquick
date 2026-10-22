@@ -4,7 +4,6 @@ import { queryPharmacies } from "@/lib/pharmacies";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    console.log("🔍 [DEBUG Search API] Request Body:", body);
 
     const medicineName = body.medicineName || body.medicine || "دواء غير محدد";
     const userLat = Number(body.userLat || body.lat || 30.9753);
@@ -17,7 +16,6 @@ export async function POST(request: Request) {
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
     if (!botToken) {
-      console.error("❌ [DEBUG Search API] TELEGRAM_BOT_TOKEN مفقود!");
       return NextResponse.json(
         { success: false, message: "توكن البوت غير معرف في متغيرات البيئة" },
         { status: 500 }
@@ -25,7 +23,6 @@ export async function POST(request: Request) {
     }
 
     const targetPharmacies = queryPharmacies(userLat, userLng, radiusKm);
-    console.log(`📍 [DEBUG Search API] تم العثور على ${targetPharmacies.length} صيدلية`);
 
     if (targetPharmacies.length === 0) {
       return NextResponse.json({
@@ -41,13 +38,12 @@ export async function POST(request: Request) {
         medicineName: medicineName,
       });
 
-      const redisRes = await fetch(
+      await fetch(
         `${redisUrl}/set/${requestId}/${encodeURIComponent(initialPayload)}?EX=7200`,
         {
           headers: { Authorization: `Bearer ${redisToken}` },
         }
       );
-      console.log("💾 [DEBUG Search API] تم حفظ pending في Redis:", await redisRes.json());
     }
 
     // 2. إرسال الرسالة مع الأزرار مفصولة بـ |
@@ -93,7 +89,7 @@ export async function POST(request: Request) {
       count: targetPharmacies.length,
     });
   } catch (error: unknown) {
-    console.error("❌ [DEBUG Search API] خطأ عام:", error);
+    console.error("Search API Error:", error);
     return NextResponse.json(
       { success: false, message: "حدث خطأ أثناء معالجة البحث" },
       { status: 500 }

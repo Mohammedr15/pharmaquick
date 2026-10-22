@@ -32,36 +32,33 @@ export default function SearchPage() {
     if ("geolocation" in navigator) {
       setLocationStatus("📡 جاري الاتصال بـ GPS الجوال...");
 
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserCoords({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-          setLocationStatus("📍 تم تحديد موقعك الجغرافي بنجاح");
-        },
-        (error) => {
-          console.warn("Geolocation Error Code:", error.code, error.message);
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              setLocationStatus("❌ تم رفض إذن الموقع. يرجى تفعيله من إعدادات المتصفح");
-              break;
-            case error.POSITION_UNAVAILABLE:
-              setLocationStatus("⚠️ إشارة الـ GPS ضعيفة، تم استخدام الموقع الافتراضي");
-              break;
-            case error.TIMEOUT:
-              setLocationStatus("⏰ انتهت مهلة الاستجابة، تم استخدام الموقع الافتراضي");
-              break;
-            default:
-              setLocationStatus("⚠️ تعذر جلب الموقع، تم استخدام الموقع الافتراضي");
-          }
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 0,
-        }
-      );
+      const handleSuccess = (position: GeolocationPosition) => {
+        setUserCoords({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
+        setLocationStatus("📍 تم تحديد موقعك الجغرافي بنجاح");
+      };
+
+      const handleError = (error: GeolocationPositionError) => {
+        console.warn("⚠️ فشل الاتصال عالي الدقة، جاري المحاولة بالدقة العادية...", error);
+
+        // محاولة ثانية بالدقة العادية لضمان عمل مستشعرات الجوال
+        navigator.geolocation.getCurrentPosition(
+          handleSuccess,
+          () => {
+            setLocationStatus("⚠️ تعذر تحديد موقع GPS دقيق، تم استخدام الموقع الافتراضي");
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+        );
+      };
+
+      // المحاولة الأولى: دقة عالية مخصصة للجوال
+      navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      });
     } else {
       setLocationStatus("⚠️ المتصفح لا يدعم تحديد الموقع التلقائي");
     }
@@ -71,21 +68,27 @@ export default function SearchPage() {
     requestLocation();
   }, [requestLocation]);
 
-  // 2️⃣ دالة الـ Polling مع كود تتبع الأخطاء (DEBUG)
+  // 2️⃣ دالة الـ Polling لكسر كاش الجوال (Anti-Cache)
   const startPolling = (requestId: string) => {
-    console.log("🔍 [DEBUG Frontend] بدء استعلام Polling لـ ID:", requestId);
+    console.log("🔍 [DEBUG Frontend] بدء استعلام Polling للجوال لـ ID:", requestId);
 
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/check-status?id=${requestId}`, {
+        // استخدام Timestamp متحرك ورؤوس نصوص تمنع تخزين الاستجابة في كاش الجوال
+        const res = await fetch(`/api/check-status?id=${requestId}&_t=${Date.now()}`, {
+          method: "GET",
+          headers: {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            Pragma: "no-cache",
+          },
           cache: "no-store",
         });
-        const data = await res.json();
 
-        console.log("📡 [DEBUG Frontend] الرد القادم من check-status:", data);
+        const data = await res.json();
+        console.log("📡 [DEBUG Frontend] الرد من check-status:", data);
 
         if (data.status === "available") {
-          console.log("🟢 [DEBUG Frontend] تم العثور على الدواء متوفر!");
+          console.log("🟢 [DEBUG Frontend] تم استلام حالة متوفر!");
           clearInterval(interval);
           setLoading(false);
           setResultData({
@@ -94,7 +97,7 @@ export default function SearchPage() {
           });
           setStatusMessage("🎉 اكتمل البحث!");
         } else if (data.status === "unavailable") {
-          console.log("🔴 [DEBUG Frontend] الدواء غير متوفر");
+          console.log("🔴 [DEBUG Frontend] تم استلام حالة غير متوفر!");
           clearInterval(interval);
           setLoading(false);
           setResultData({
@@ -119,7 +122,7 @@ export default function SearchPage() {
     }, 120000);
   };
 
-  // 3️⃣ إرسال طلب البحث
+  // 3️⃣ إرسال الطلب
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
 

@@ -5,7 +5,7 @@ export async function GET(request: Request) {
   const id = searchParams.get("id");
 
   if (!id) {
-    return NextResponse.json({ status: "pending", error: "Missing ID" });
+    return NextResponse.json({ status: "pending" });
   }
 
   try {
@@ -13,40 +13,39 @@ export async function GET(request: Request) {
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
     if (!redisUrl || !redisToken) {
-      return NextResponse.json({ status: "pending", error: "Redis env missing" });
+      return NextResponse.json({ status: "pending" });
     }
 
-    // قراءة مباشرة من Upstash بدون Caching
     const res = await fetch(`${redisUrl}/get/${id}`, {
-      headers: {
-        Authorization: `Bearer ${redisToken}`,
-      },
+      headers: { Authorization: `Bearer ${redisToken}` },
       cache: "no-store",
     });
 
     const data = await res.json();
 
-    // فحص واستخراج النتيجة سواء كانت String أو Object
     if (data && data.result) {
-      let rawResult = data.result;
-
-      // إذا كانت القيمة مخزنة كـ JSON String داخل Redis
-      if (typeof rawResult === "string") {
+      let parsed = data.result;
+      
+      // تفكيك سلسلة JSON النصية المزدوجة إن وجدت
+      if (typeof parsed === "string") {
         try {
-          rawResult = JSON.parse(rawResult);
+          parsed = JSON.parse(parsed);
+          if (typeof parsed === "string") {
+            parsed = JSON.parse(parsed);
+          }
         } catch {
-          // في حال كانت نص عادي
+          // متسامح مع أي أخطاء تحويل
         }
       }
 
-      if (typeof rawResult === "object" && rawResult !== null) {
-        return NextResponse.json(rawResult);
+      if (parsed && typeof parsed === "object" && parsed.status) {
+        return NextResponse.json(parsed);
       }
     }
 
     return NextResponse.json({ status: "pending" });
-  } catch (error) {
-    console.error("Check status endpoint error:", error);
+  } catch (error: unknown) {
+    console.error("Check status error:", error);
     return NextResponse.json({ status: "pending" });
   }
 }

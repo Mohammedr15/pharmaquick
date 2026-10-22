@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { queryPharmacies } from "../../lib/pharmacies";
+import { queryPharmacies } from "@/lib/pharmacies";
 
 export async function POST(request: Request) {
   try {

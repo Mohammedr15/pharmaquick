@@ -1,24 +1,47 @@
-// app/api/search/route.ts
-
 import { NextResponse } from "next/server";
 import { queryPharmacies } from "@/lib/pharmacies";
 
 export async function POST(request: Request) {
   try {
-    const { medicineName, userLat, userLng, radiusKm, requestId } = await request.json();
+    const body = await request.json();
+    const { medicineName, userLat, userLng, radiusKm, requestId } = body;
+
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
     if (!botToken) {
-      return NextResponse.json({ success: false, message: "توكن البوت غير معرف" }, { status: 500 });
+      return NextResponse.json(
+        { success: false, message: "توكن البوت غير معرف" },
+        { status: 500 }
+      );
     }
 
-    const targetPharmacies = queryPharmacies(userLat, userLng, radiusKm);
+    const targetPharmacies = queryPharmacies(
+      Number(userLat),
+      Number(userLng),
+      Number(radiusKm)
+    );
 
     if (targetPharmacies.length === 0) {
       return NextResponse.json({
         success: false,
         message: `لا توجد صيدليات مسجلة ضمن نطاق ${radiusKm} كم.`,
       });
+    }
+
+    if (redisUrl && redisToken) {
+      const initialPayload = JSON.stringify({
+        status: "pending",
+        medicineName: medicineName || "",
+      });
+
+      await fetch(
+        `${redisUrl}/set/${requestId}/${encodeURIComponent(initialPayload)}?EX=7200`,
+        {
+          headers: { Authorization: `Bearer ${redisToken}` },
+        }
+      );
     }
 
     const sendPromises = targetPharmacies.map((pharmacy) => {
@@ -38,9 +61,14 @@ export async function POST(request: Request) {
           reply_markup: {
             inline_keyboard: [
               [
-                // 🟢 استخدام avail و unavail لمنع التضارب أثناء الـ split
-                { text: "✅ متوفر", callback_data: `avail_${requestId}_${pharmacy.name}` },
-                { text: "❌ غير متوفر", callback_data: `unavail_${requestId}_${pharmacy.name}` },
+                {
+                  text: "✅ متوفر",
+                  callback_data: `avail_${requestId}_${pharmacy.id}`,
+                },
+                {
+                  text: "❌ غير متوفر",
+                  callback_data: `unavail_${requestId}_${pharmacy.id}`,
+                },
               ],
             ],
           },
@@ -50,9 +78,15 @@ export async function POST(request: Request) {
 
     await Promise.all(sendPromises);
 
-    return NextResponse.json({ success: true, count: targetPharmacies.length });
-  } catch (error) {
+    return NextResponse.json({
+      success: true,
+      count: targetPharmacies.length,
+    });
+  } catch (error: unknown) {
     console.error("Search API Error:", error);
-    return NextResponse.json({ success: false, message: "خطأ في السيرفر" }, { status: 500 });
+    return NextResponse.json(
+      { success: false, message: "خطأ في الخادم" },
+      { status: 500 }
+    );
   }
 }

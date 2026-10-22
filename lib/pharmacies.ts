@@ -1,30 +1,74 @@
+// lib/pharmacies.ts
+
 export interface Pharmacy {
   id: string;
-  nameAr: string;
-  phone: string;
+  name: string;
   lat: number;
   lng: number;
-  address: string;
-  telegramChatId: string;
+  chatId: string;
+  distance?: number;
 }
 
-export const pharmacies: Pharmacy[] = [
+export type PharmacyWithDistance = Pharmacy & { distance: number };
+
+export const PHARMACIES_DATABASE: Pharmacy[] = [
   {
-    id: 'ph-001',
-    nameAr: 'صيدلية النور',
-    phone: '+966565897156',
-    lat: 30.979764,
-    lng: 41.061999,
-    address: 'شارع الملك فهد، حي الوسطى، عرعر',
-    telegramChatId: '1364025965',
+    id: "pharma_arar_1",
+    name: "صيدلية الدواء - عرعر المركزية",
+    lat: 30.9753,
+    lng: 41.0381,
+    chatId: "84149962",
   },
   {
-    id: 'ph-002',
-    nameAr: 'صيدلية الشفاء',
-    phone: '+966500000002',
-    lat: 30.982,
-    lng: 41.041,
-    address: 'طريق الملك عبدالعزيز، حي الزهرة، عرعر',
-    telegramChatId: '100000000002',
+    id: "pharma_belqas_1",
+    name: "صيدلية بلقاس - مصر",
+    lat: 31.2141,
+    lng: 31.3582,
+    chatId: "123456789",
   },
 ];
+
+export function calculateDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+export function queryPharmacies(
+  userLat: number,
+  userLng: number,
+  radiusKm: number
+): PharmacyWithDistance[] {
+  const results: PharmacyWithDistance[] = [];
+
+  for (const pharmacy of PHARMACIES_DATABASE) {
+    const dist = calculateDistance(
+      userLat,
+      userLng,
+      pharmacy.lat,
+      pharmacy.lng
+    );
+
+    if (dist <= radiusKm) {
+      results.push({
+        ...pharmacy,
+        distance: dist,
+      });
+    }
+  }
+
+  return results;
+}

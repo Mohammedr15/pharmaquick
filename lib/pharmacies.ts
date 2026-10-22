@@ -15,9 +15,9 @@ export const PHARMACIES_DATABASE: Pharmacy[] = [
   {
     id: "pharma_arar_1",
     name: "صيدلية الدواء - عرعر المركزية",
-    lat: 30.9753,
-    lng: 41.0381,
-    chatId: "84149962",
+    lat: 30.979764,
+    lng: 41.061999,
+    chatId: "1364025965",
   },
   {
     id: "pharma_belqas_1",

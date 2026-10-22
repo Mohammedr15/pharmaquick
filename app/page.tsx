@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 export default function SearchPage() {
   const [medicineName, setMedicineName] = useState("");
@@ -11,16 +11,27 @@ export default function SearchPage() {
     pharmacyName?: string;
   } | null>(null);
 
-  // موقع المستخدم الجغرافي (افتراضياً عرعر/القصيم)
+  // موقع العميل الجغرافي (افتراضياً عرعر)
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number }>({
     lat: 30.9753,
     lng: 41.0381,
   });
-  const [locationStatus, setLocationStatus] = useState("جاري تحديد موقعك...");
+  const [locationStatus, setLocationStatus] = useState("جاري جلب موقعك الجغرافي...");
 
-  // 1️⃣ جلب موقع المستخدم الجغرافي الحقيقي تلقائياً
-  useEffect(() => {
+  // 1️⃣ دالة جلب الموقع الجغرافي المخصصة للهواتف والـ HTTPS
+  const requestLocation = useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      window.location.protocol !== "https:" &&
+      window.location.hostname !== "localhost"
+    ) {
+      setLocationStatus("⚠️ يجب فتح الموقع عبر رابط آمن (HTTPS) لتفعيل الـ GPS");
+      return;
+    }
+
     if ("geolocation" in navigator) {
+      setLocationStatus("📡 جاري الاتصال بـ GPS الجوال...");
+
       navigator.geolocation.getCurrentPosition(
         (position) => {
           setUserCoords({
@@ -30,17 +41,37 @@ export default function SearchPage() {
           setLocationStatus("📍 تم تحديد موقعك الجغرافي بنجاح");
         },
         (error) => {
-          console.warn("Geolocation Error:", error);
-          setLocationStatus("⚠️ تعذر تحديد الموقع، تم استخدام الموقع الافتراضي");
+          console.warn("Geolocation Error Code:", error.code, error.message);
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              setLocationStatus("❌ تم رفض إذن الموقع. يرجى تفعيله من إعدادات المتصفح");
+              break;
+            case error.POSITION_UNAVAILABLE:
+              setLocationStatus("⚠️ إشارة الـ GPS ضعيفة، تم استخدام الموقع الافتراضي");
+              break;
+            case error.TIMEOUT:
+              setLocationStatus("⏰ انتهت مهلة الاستجابة، تم استخدام الموقع الافتراضي");
+              break;
+            default:
+              setLocationStatus("⚠️ تعذر جلب الموقع، تم استخدام الموقع الافتراضي");
+          }
         },
-        { enableHighAccuracy: true, timeout: 10000 }
+        {
+          enableHighAccuracy: true, // تفعيل GPS الجوال عالي الدقة
+          timeout: 15000,          // مهلة 15 ثانية للجوال
+          maximumAge: 0,
+        }
       );
     } else {
       setLocationStatus("⚠️ المتصفح لا يدعم تحديد الموقع التلقائي");
     }
   }, []);
 
-  // 2️⃣ بدء مراقبة تحديث الرد من Upstash Redis (Polling)
+  useEffect(() => {
+    requestLocation();
+  }, [requestLocation]);
+
+  // 2️⃣ دالة الـ Polling الاستعلامية المباشرة
   const startPolling = (requestId: string) => {
     const interval = setInterval(async () => {
       try {
@@ -69,9 +100,8 @@ export default function SearchPage() {
       } catch (err) {
         console.error("Polling Error:", err);
       }
-    }, 2000); // يفحص السيرفر كل ثانيتين
+    }, 2000);
 
-    // إيقاف الفحص تلقائياً بعد دقيقتين في حال عدم رد أي صيدلية
     setTimeout(() => {
       clearInterval(interval);
       if (loading) {
@@ -81,7 +111,7 @@ export default function SearchPage() {
     }, 120000);
   };
 
-  // 3️⃣ إرسال طلب البحث
+  // 3️⃣ إرسال الطلب
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -104,7 +134,7 @@ export default function SearchPage() {
           medicineName: medicineName,
           userLat: userCoords.lat,
           userLng: userCoords.lng,
-          radiusKm: 50, // البحث ضمن نطاق 50 كم من موقع العميل
+          radiusKm: 50,
           requestId: requestId,
         }),
       });
@@ -113,7 +143,6 @@ export default function SearchPage() {
 
       if (res.ok && data.success) {
         setStatusMessage(`✅ تم إرسال الطلب إلى ${data.count} صيدلية قريبة! بانتظار الرد...`);
-        // بدء الـ Polling الفوري
         startPolling(requestId);
       } else {
         setLoading(false);
@@ -130,13 +159,23 @@ export default function SearchPage() {
     <main className="min-h-screen bg-slate-50 py-10 px-4 text-gray-900" dir="rtl">
       <div className="max-w-md mx-auto bg-white rounded-2xl shadow-xl p-6 border border-slate-200 space-y-6">
         
-        {/* العناوين بنصوص واضحة وداكنة */}
+        {/* العناوين */}
         <div className="text-center space-y-2">
           <h1 className="text-2xl font-bold text-slate-900">PharmaQuick | فارما كويك</h1>
           <p className="text-sm font-semibold text-slate-700">البحث السريع عن الأدوية في الصيدليات القريبة</p>
-          <span className="inline-block text-xs font-medium text-slate-600 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
-            {locationStatus}
-          </span>
+          
+          <div className="flex flex-col items-center gap-2">
+            <span className="inline-block text-xs font-medium text-slate-700 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200">
+              {locationStatus}
+            </span>
+            <button
+              type="button"
+              onClick={requestLocation}
+              className="text-xs font-bold text-blue-600 hover:underline focus:outline-none"
+            >
+              🔄 إعادة محاولة جلب الموقع
+            </button>
+          </div>
         </div>
 
         {/* نموذج البحث */}
@@ -170,7 +209,7 @@ export default function SearchPage() {
           </div>
         )}
 
-        {/* بطاقة النتيجة التفاعلية المباشرة */}
+        {/* بطاقة النتيجة */}
         {resultData && (
           <div
             className={`p-5 rounded-2xl border-2 text-center space-y-2 transition-all ${

@@ -3,7 +3,6 @@
 import { NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
 
-// الاتصال المباشر بقاعدة بيانات Redis باستخدام متغيرات البيئة
 const redis = Redis.fromEnv();
 
 export async function POST(request: Request) {
@@ -11,26 +10,33 @@ export async function POST(request: Request) {
     const body = await request.json();
 
     if (body.callback_query) {
-      const callbackData = body.callback_query.data; // available_REQ123_PharmaName
+      const callbackData = body.callback_query.data as string; // مثال: avail_REQ123_صيدلية الدواء
       const chatId = body.callback_query.message.chat.id;
       const messageId = body.callback_query.message.message_id;
 
-      const [action, requestId, pharmacyName] = callbackData.split("_");
-      const isAvailable = action === "available";
+      // تقسيم البيانات بوضوح
+      const parts = callbackData.split("_");
+      const action = parts[0]; // avail أو unavail
+      const requestId = parts[1];
+      const pharmacyName = parts.slice(2).join("_") || "الصيدلية"; // لتجنب مشاكل الأسماء التي تحتوي على مسافات أو شرطات
 
-      // 1️⃣ حفظ حالة الطلب فوراً في Redis مع تعيين وقت انتهاء الصلاحية (Expiration: 2 hours)
+      // 🎯 تحديد الحالة بدقة متناهية
+      const isAvailable = action === "avail";
+      const finalStatus = isAvailable ? "available" : "unavailable";
+
+      // 1. حفظ الحالة في Redis
       await redis.set(
         requestId,
         JSON.stringify({
-          status: isAvailable ? "available" : "unavailable",
-          pharmacyName: pharmacyName || "الصيدلية",
+          status: finalStatus,
+          pharmacyName: pharmacyName,
         }),
         { ex: 7200 }
       );
 
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
-      // 2️⃣ إجابة زر التليجرام
+      // 2. إجابة زر التليجرام (Alert)
       await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -40,7 +46,7 @@ export async function POST(request: Request) {
         }),
       });
 
-      // 3️⃣ تحديث نص الرسالة في التليجرام
+      // 3. تعديل نص الرسالة في التليجرام
       await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -55,7 +61,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error("Webhook Redis Error:", error);
+    console.error("Webhook Error:", error);
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 }

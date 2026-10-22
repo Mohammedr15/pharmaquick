@@ -13,11 +13,10 @@ export async function GET(request: Request) {
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
     if (!redisUrl || !redisToken) {
-      console.error("Redis environment variables missing!");
       return NextResponse.json({ status: "pending", error: "Redis env missing" });
     }
 
-    // قراءة مباشرة مع إلغاء الـ Cache كلياً
+    // قراءة مباشرة من Upstash بدون Caching
     const res = await fetch(`${redisUrl}/get/${id}`, {
       headers: {
         Authorization: `Bearer ${redisToken}`,
@@ -27,14 +26,27 @@ export async function GET(request: Request) {
 
     const data = await res.json();
 
-    if (data.result) {
-      const parsedData = typeof data.result === "string" ? JSON.parse(data.result) : data.result;
-      return NextResponse.json(parsedData);
+    // فحص واستخراج النتيجة سواء كانت String أو Object
+    if (data && data.result) {
+      let rawResult = data.result;
+
+      // إذا كانت القيمة مخزنة كـ JSON String داخل Redis
+      if (typeof rawResult === "string") {
+        try {
+          rawResult = JSON.parse(rawResult);
+        } catch {
+          // في حال كانت نص عادي
+        }
+      }
+
+      if (typeof rawResult === "object" && rawResult !== null) {
+        return NextResponse.json(rawResult);
+      }
     }
 
     return NextResponse.json({ status: "pending" });
   } catch (error) {
-    console.error("Check status error:", error);
+    console.error("Check status endpoint error:", error);
     return NextResponse.json({ status: "pending" });
   }
 }

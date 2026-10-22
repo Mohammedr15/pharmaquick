@@ -1,57 +1,61 @@
-import { NextResponse } from "next/server";
+// app/api/telegram-webhook/route.ts
 
-// استخدام كائن عالمي موحد للذاكرة لا يضيع مع إعادة التحميل المؤقت
-if (!(global as any).pharmacyResponses) {
-  (global as any).pharmacyResponses = {};
-}
-const globalStore = (global as any).pharmacyResponses;
+import { NextResponse } from "next/server";
+import { Redis } from "@upstash/redis";
+
+// الاتصال المباشر بقاعدة بيانات Redis باستخدام متغيرات البيئة
+const redis = Redis.fromEnv();
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
     if (body.callback_query) {
-      const callback = body.callback_query;
-      const data = callback.data; // المار مثل: avail_yes_1 أو avail_no_1
+      const callbackData = body.callback_query.data; // available_REQ123_PharmaName
+      const chatId = body.callback_query.message.chat.id;
+      const messageId = body.callback_query.message.message_id;
 
-      const [action, status, pharmacyId] = data.split("_");
+      const [action, requestId, pharmacyName] = callbackData.split("_");
+      const isAvailable = action === "available";
 
-      if (action === "avail" && pharmacyId) {
-        // تخزين رد الصيدلية بالـ ID الخاص بها
-        globalStore[pharmacyId] = {
-          status: status === "yes" ? "AVAILABLE" : "UNAVAILABLE",
-          updatedAt: Date.now(),
-        };
+      // 1️⃣ حفظ حالة الطلب فوراً في Redis مع تعيين وقت انتهاء الصلاحية (Expiration: 2 hours)
+      await redis.set(
+        requestId,
+        JSON.stringify({
+          status: isAvailable ? "available" : "unavailable",
+          pharmacyName: pharmacyName || "الصيدلية",
+        }),
+        { ex: 7200 }
+      );
 
-        const botToken = process.env.TELEGRAM_BOT_TOKEN;
+      const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
-        // إشعار الصيدلي في تليجرام باستلام الرد
-        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            callback_query_id: callback.id,
-            text: status === "yes" ? "✅ تم تأكيد توفر الدواء" : "❌ تم تسجيل عدم توفر الدواء",
-          }),
-        });
+      // 2️⃣ إجابة زر التليجرام
+      await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          callback_query_id: body.callback_query.id,
+          text: isAvailable ? "تم تسجيل الرد: متوفر 🟢" : "تم تسجيل الرد: غير متوفر 🔴",
+        }),
+      });
 
-        // تعديل نص الرسالة في تليجرام
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: callback.message.chat.id,
-            message_id: callback.message.message_id,
-            text: `${callback.message.text}\n\n📌 *الرد الحالي:* ${status === "yes" ? "✅ متوفر" : "❌ غير متوفر"}`,
-            parse_mode: "Markdown",
-          }),
-        });
-      }
+      // 3️⃣ تحديث نص الرسالة في التليجرام
+      await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          message_id: messageId,
+          text: `تم تسجيل ردك بنجاح:\nحالة الدواء: *${isAvailable ? "✅ متوفر" : "❌ غير متوفر"}*`,
+          parse_mode: "Markdown",
+        }),
+      });
     }
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error("Webhook Error:", error);
+    console.error("Webhook Redis Error:", error);
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 }

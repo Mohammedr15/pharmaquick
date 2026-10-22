@@ -5,7 +5,7 @@ export async function GET(request: Request) {
   const id = searchParams.get("id");
 
   if (!id) {
-    return NextResponse.json({ status: "pending" });
+    return NextResponse.json({ status: "pending", error: "Missing ID" });
   }
 
   try {
@@ -13,15 +13,16 @@ export async function GET(request: Request) {
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
     if (!redisUrl || !redisToken) {
-      return NextResponse.json({ status: "pending" });
+      console.error("Redis environment variables missing!");
+      return NextResponse.json({ status: "pending", error: "Redis env missing" });
     }
 
-    // القراءة المباشرة من Redis
+    // قراءة مباشرة مع إلغاء الـ Cache كلياً
     const res = await fetch(`${redisUrl}/get/${id}`, {
       headers: {
         Authorization: `Bearer ${redisToken}`,
       },
-      cache: "no-store", // منع الكاش للحصول على النتيجة فوراً
+      cache: "no-store",
     });
 
     const data = await res.json();

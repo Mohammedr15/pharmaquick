@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { PHARMACIES_DATABASE } from "../../../lib/pharmacies";
+import { PHARMACIES_DATABASE } from "@/lib/pharmacies";
 
 export async function POST(request: Request) {
   try {
@@ -11,6 +11,7 @@ export async function POST(request: Request) {
       const chatId = callbackQuery.message.chat.id;
       const messageId = callbackQuery.message.message_id;
 
+      // 1. تفكيك البيانات: action_requestId_pharmacyId
       const parts = callbackData.split("_");
       const action = parts[0];
       const requestId = parts[1];
@@ -19,13 +20,16 @@ export async function POST(request: Request) {
       const isAvailable = action === "avail";
       const statusValue = isAvailable ? "available" : "unavailable";
 
-      const matchedPharmacy = PHARMACIES_DATABASE.find(
-        (p) => p.id === pharmacyId
-      );
-      const pharmacyName = matchedPharmacy
-        ? matchedPharmacy.name
-        : "الصيدلية";
+      // 2. محاولة جلب اسم الصيدلية (أو استخدام اسم افتراضي تجنباً للتعطل)
+      let pharmacyName = "صيدلية الدواء";
+      if (pharmacyId) {
+        const matched = PHARMACIES_DATABASE.find((p) => p.id === pharmacyId);
+        if (matched) {
+          pharmacyName = matched.name;
+        }
+      }
 
+      // 3. الحفظ الفوري المباشر في Upstash Redis
       const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
       const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
@@ -35,6 +39,7 @@ export async function POST(request: Request) {
           pharmacyName: pharmacyName,
         });
 
+        // كتابة الحالة فوراً في Redis
         await fetch(
           `${redisUrl}/set/${requestId}/${encodeURIComponent(payload)}?EX=7200`,
           {
@@ -46,6 +51,7 @@ export async function POST(request: Request) {
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
       if (botToken) {
+        // 4. إغلاق مؤشر التحميل في التليجرام
         await fetch(
           `https://api.telegram.org/bot${botToken}/answerCallbackQuery`,
           {
@@ -53,13 +59,12 @@ export async function POST(request: Request) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               callback_query_id: callbackQuery.id,
-              text: isAvailable
-                ? "تم تسجيل الرد: متوفر 🟢"
-                : "تم تسجيل الرد: غير متوفر 🔴",
+              text: isAvailable ? "تم تسجيل الرد: متوفر 🟢" : "تم تسجيل الرد: غير متوفر 🔴",
             }),
           }
         );
 
+        // 5. تحديث الرسالة لدى الصيدلي
         await fetch(
           `https://api.telegram.org/bot${botToken}/editMessageText`,
           {

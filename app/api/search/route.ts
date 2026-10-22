@@ -4,12 +4,12 @@ import { queryPharmacies } from "@/lib/pharmacies";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    console.log("Search Request Body:", body); // لطباعة البيانات في Vercel Logs
+    console.log("Search Request Body:", body);
 
     const medicineName = body.medicineName || body.medicine || "دواء غير محدد";
     const userLat = Number(body.userLat || body.lat || 30.9753);
     const userLng = Number(body.userLng || body.lng || 41.0381);
-    const radiusKm = Number(body.radiusKm || body.radius || 5000); // نطاق واسع افتراضياً للاختبار
+    const radiusKm = Number(body.radiusKm || body.radius || 5000);
     const requestId = body.requestId || `REQ_${Date.now()}`;
 
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -24,18 +24,18 @@ export async function POST(request: Request) {
       );
     }
 
-    // 1️⃣ البحث عن الصيدليات
+    // 1️⃣ البحث عن الصيدليات المسجلة ضمن النطاق
     const targetPharmacies = queryPharmacies(userLat, userLng, radiusKm);
     console.log(`Found ${targetPharmacies.length} pharmacies within range.`);
 
     if (targetPharmacies.length === 0) {
       return NextResponse.json({
         success: false,
-        message: `لا توجد صيدليات مسجلة ضمن النطاق المحدد.`,
+        message: "لا توجد صيدليات مسجلة ضمن النطاق المحدد.",
       });
     }
 
-    // 2️⃣ إدخال حالة الطلب المبدئية في Upstash Redis
+    // 2️⃣ تعيين حالة الطلب المبدئية (pending) في Upstash Redis
     if (redisUrl && redisToken) {
       const initialPayload = JSON.stringify({
         status: "pending",
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3️⃣ إرسال الرسالة إلى التليجرام لكل صيدلية قريبة
+    // 3️⃣ إرسال الرسالة مع الأزرار التفاعلية المحدثة بفاصل (|) إلى التليجرام
     const sendPromises = targetPharmacies.map(async (pharmacy) => {
       const messageText =
         `🔍 *استعلام جديد عن دواء*\n\n` +
@@ -70,11 +70,11 @@ export async function POST(request: Request) {
               [
                 {
                   text: "✅ متوفر",
-                  callback_data: `avail_${requestId}_${pharmacy.id}`,
+                  callback_data: `avail|${requestId}|${pharmacy.id}`,
                 },
                 {
                   text: "❌ غير متوفر",
-                  callback_data: `unavail_${requestId}_${pharmacy.id}`,
+                  callback_data: `unavail|${requestId}|${pharmacy.id}`,
                 },
               ],
             ],
@@ -82,9 +82,7 @@ export async function POST(request: Request) {
         }),
       });
 
-      const resData = await res.json();
-      console.log(`Telegram Send Result for ${pharmacy.name}:`, resData);
-      return resData;
+      return await res.json();
     });
 
     await Promise.all(sendPromises);

@@ -57,8 +57,8 @@ export default function SearchPage() {
           }
         },
         {
-          enableHighAccuracy: true, // تفعيل GPS الجوال عالي الدقة
-          timeout: 15000,          // مهلة 15 ثانية للجوال
+          enableHighAccuracy: true,
+          timeout: 15000,
           maximumAge: 0,
         }
       );
@@ -71,8 +71,10 @@ export default function SearchPage() {
     requestLocation();
   }, [requestLocation]);
 
-  // 2️⃣ دالة الـ Polling الاستعلامية المباشرة
+  // 2️⃣ دالة الـ Polling مع كود تتبع الأخطاء (DEBUG)
   const startPolling = (requestId: string) => {
+    console.log("🔍 [DEBUG Frontend] بدء استعلام Polling لـ ID:", requestId);
+
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/check-status?id=${requestId}`, {
@@ -80,7 +82,10 @@ export default function SearchPage() {
         });
         const data = await res.json();
 
+        console.log("📡 [DEBUG Frontend] الرد القادم من check-status:", data);
+
         if (data.status === "available") {
+          console.log("🟢 [DEBUG Frontend] تم العثور على الدواء متوفر!");
           clearInterval(interval);
           setLoading(false);
           setResultData({
@@ -89,6 +94,7 @@ export default function SearchPage() {
           });
           setStatusMessage("🎉 اكتمل البحث!");
         } else if (data.status === "unavailable") {
+          console.log("🔴 [DEBUG Frontend] الدواء غير متوفر");
           clearInterval(interval);
           setLoading(false);
           setResultData({
@@ -96,9 +102,11 @@ export default function SearchPage() {
             pharmacyName: data.pharmacyName || "صيدلية قريبة",
           });
           setStatusMessage("❌ تم استلام الرد");
+        } else {
+          console.log("⏳ [DEBUG Frontend] بانتظار رد الصيدلي (pending)...");
         }
       } catch (err) {
-        console.error("Polling Error:", err);
+        console.error("❌ [DEBUG Frontend] خطأ في جلب حالة الطلب:", err);
       }
     }, 2000);
 
@@ -111,7 +119,7 @@ export default function SearchPage() {
     }, 120000);
   };
 
-  // 3️⃣ إرسال الطلب
+  // 3️⃣ إرسال طلب البحث
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -126,6 +134,7 @@ export default function SearchPage() {
 
     try {
       const requestId = `REQ_${Date.now()}`;
+      console.log("🚀 [DEBUG Frontend] إرسال طلب جديد بـ ID:", requestId);
 
       const res = await fetch("/api/search", {
         method: "POST",
@@ -140,6 +149,7 @@ export default function SearchPage() {
       });
 
       const data = await res.json();
+      console.log("📩 [DEBUG Frontend] استجابة API البحث:", data);
 
       if (res.ok && data.success) {
         setStatusMessage(`✅ تم إرسال الطلب إلى ${data.count} صيدلية قريبة! بانتظار الرد...`);
@@ -149,7 +159,7 @@ export default function SearchPage() {
         setStatusMessage(`⚠️ ${data.message || "لم يتم العثور على صيدليات مسجلة ضمن نطاق موقعك"}`);
       }
     } catch (err) {
-      console.error("Search Error:", err);
+      console.error("❌ [DEBUG Frontend] خطأ في الاتصال بالشبكة:", err);
       setLoading(false);
       setStatusMessage("❌ حدث خطأ في الاتصال بالشبكة");
     }

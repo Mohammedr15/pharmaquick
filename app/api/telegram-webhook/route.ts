@@ -11,11 +11,15 @@ export async function POST(request: Request) {
       const chatId = callbackQuery.message.chat.id;
       const messageId = callbackQuery.message.message_id;
 
-      // تفكيك باستخدام الفاصل |
+      console.log("📩 [DEBUG Webhook] Callback Data المستلمة:", callbackData);
+
+      // تفكيك البيانات باستخدام الفاصل |
       const parts = callbackData.split("|");
       const action = parts[0];
       const requestId = parts[1];
       const pharmacyId = parts[2];
+
+      console.log(`🔑 [DEBUG Webhook] requestId: ${requestId}, Action: ${action}, Pharmacy: ${pharmacyId}`);
 
       const isAvailable = action === "avail";
       const statusValue = isAvailable ? "available" : "unavailable";
@@ -31,19 +35,20 @@ export async function POST(request: Request) {
       const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
       const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-      // التخزين الصريح بالرمز الدقيق لـ requestId
+      // الحفظ المباشر باسم المفتاح الصحيح دون تقطيع
       if (redisUrl && redisToken && requestId) {
         const payloadData = JSON.stringify({
           status: statusValue,
           pharmacyName: pharmacyName,
         });
 
-        await fetch(
+        const saveRes = await fetch(
           `${redisUrl}/set/${requestId}/${encodeURIComponent(payloadData)}?EX=7200`,
           {
             headers: { Authorization: `Bearer ${redisToken}` },
           }
         );
+        console.log("💾 [DEBUG Webhook] النتيجة المسجلة في Redis:", await saveRes.json());
       }
 
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -75,7 +80,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
-    console.error("Webhook Error:", error);
+    console.error("❌ [DEBUG Webhook] خطأ أثناء معالجة الـ Webhook:", error);
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 }

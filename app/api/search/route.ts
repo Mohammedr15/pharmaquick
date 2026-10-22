@@ -4,6 +4,7 @@ import { queryPharmacies } from "@/lib/pharmacies";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    console.log("🔍 [DEBUG Search API] Request Body:", body);
 
     const medicineName = body.medicineName || body.medicine || "دواء غير محدد";
     const userLat = Number(body.userLat || body.lat || 30.9753);
@@ -16,13 +17,15 @@ export async function POST(request: Request) {
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
     if (!botToken) {
+      console.error("❌ [DEBUG Search API] TELEGRAM_BOT_TOKEN مفقود!");
       return NextResponse.json(
-        { success: false, message: "توكن البوت غير معرف" },
+        { success: false, message: "توكن البوت غير معرف في متغيرات البيئة" },
         { status: 500 }
       );
     }
 
     const targetPharmacies = queryPharmacies(userLat, userLng, radiusKm);
+    console.log(`📍 [DEBUG Search API] تم العثور على ${targetPharmacies.length} صيدلية`);
 
     if (targetPharmacies.length === 0) {
       return NextResponse.json({
@@ -31,22 +34,23 @@ export async function POST(request: Request) {
       });
     }
 
-    // تعيين حالة الطلب المبدئية
+    // 1. تعيين حالة الطلب المبدئية في Redis
     if (redisUrl && redisToken) {
       const initialPayload = JSON.stringify({
         status: "pending",
         medicineName: medicineName,
       });
 
-      await fetch(
+      const redisRes = await fetch(
         `${redisUrl}/set/${requestId}/${encodeURIComponent(initialPayload)}?EX=7200`,
         {
           headers: { Authorization: `Bearer ${redisToken}` },
         }
       );
+      console.log("💾 [DEBUG Search API] تم حفظ pending في Redis:", await redisRes.json());
     }
 
-    // إرسال الرسالة مع استخدام الفاصل | لمنع تشتت المعرف
+    // 2. إرسال الرسالة مع الأزرار مفصولة بـ |
     const sendPromises = targetPharmacies.map(async (pharmacy) => {
       const messageText =
         `🔍 *استعلام جديد عن دواء*\n\n` +
@@ -89,7 +93,7 @@ export async function POST(request: Request) {
       count: targetPharmacies.length,
     });
   } catch (error: unknown) {
-    console.error("Search API Error:", error);
+    console.error("❌ [DEBUG Search API] خطأ عام:", error);
     return NextResponse.json(
       { success: false, message: "حدث خطأ أثناء معالجة البحث" },
       { status: 500 }

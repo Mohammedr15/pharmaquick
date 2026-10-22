@@ -13,6 +13,7 @@ export async function GET(request: Request) {
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
     if (!redisUrl || !redisToken) {
+      console.error("❌ [DEBUG Check-Status] متغيرات Upstash Redis مفقودة!");
       return NextResponse.json({ status: "pending" });
     }
 
@@ -22,11 +23,12 @@ export async function GET(request: Request) {
     });
 
     const data = await res.json();
+    console.log(`🔎 [DEBUG Check-Status] البيانات المسترجعة من Redis لـ (${id}):`, data);
 
     if (data && data.result) {
       let parsed = data.result;
 
-      // فك التغليف المزدوج لـ JSON
+      // فك التغليف المزدوج لـ JSON إن وجد
       if (typeof parsed === "string") {
         try {
           parsed = JSON.parse(parsed);
@@ -34,18 +36,19 @@ export async function GET(request: Request) {
             parsed = JSON.parse(parsed);
           }
         } catch {
-          // في حال النص العادي
+          // التعامل مع النصوص العادية
         }
       }
 
       if (parsed && typeof parsed === "object" && parsed.status) {
+        console.log("✅ [DEBUG Check-Status] إعادة القيمة للفرونت إند:", parsed);
         return NextResponse.json(parsed);
       }
     }
 
     return NextResponse.json({ status: "pending" });
   } catch (error: unknown) {
-    console.error("Check status error:", error);
+    console.error("❌ [DEBUG Check-Status] خطأ:", error);
     return NextResponse.json({ status: "pending" });
   }
 }

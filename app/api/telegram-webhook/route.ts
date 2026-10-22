@@ -1,42 +1,44 @@
-// app/api/telegram-webhook/route.ts
-
 import { NextResponse } from "next/server";
-import { Redis } from "@upstash/redis";
-
-const redis = Redis.fromEnv();
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
     if (body.callback_query) {
-      const callbackData = body.callback_query.data as string; // مثال: avail_REQ123_صيدلية الدواء
+      const callbackData = body.callback_query.data as string;
       const chatId = body.callback_query.message.chat.id;
       const messageId = body.callback_query.message.message_id;
 
-      // تقسيم البيانات بوضوح
+      // 1. تفكيك بيانات الزر بحذر
       const parts = callbackData.split("_");
       const action = parts[0]; // avail أو unavail
       const requestId = parts[1];
-      const pharmacyName = parts.slice(2).join("_") || "الصيدلية"; // لتجنب مشاكل الأسماء التي تحتوي على مسافات أو شرطات
+      const pharmacyName = parts.slice(2).join("_") || "الصيدلية";
 
-      // 🎯 تحديد الحالة بدقة متناهية
       const isAvailable = action === "avail";
-      const finalStatus = isAvailable ? "available" : "unavailable";
+      const statusValue = isAvailable ? "available" : "unavailable";
 
-      // 1. حفظ الحالة في Redis
-      await redis.set(
-        requestId,
-        JSON.stringify({
-          status: finalStatus,
+      // 2. الحفظ المباشر في Upstash Redis باستخدام REST API لضمان عدم الضياع
+      const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+      const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+      if (redisUrl && redisToken) {
+        const payload = JSON.stringify({
+          status: statusValue,
           pharmacyName: pharmacyName,
-        }),
-        { ex: 7200 }
-      );
+        });
+
+        // تخزين البيانات لمدة 7200 ثانية (ساعتين)
+        await fetch(`${redisUrl}/set/${requestId}/${encodeURIComponent(payload)}?EX=7200`, {
+          headers: {
+            Authorization: `Bearer ${redisToken}`,
+          },
+        });
+      }
 
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
-      // 2. إجابة زر التليجرام (Alert)
+      // 3. إجابة زر التليجرام (إلغاء التحميل)
       await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -46,7 +48,7 @@ export async function POST(request: Request) {
         }),
       });
 
-      // 3. تعديل نص الرسالة في التليجرام
+      // 4. تعديل النص داخل التليجرام
       await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

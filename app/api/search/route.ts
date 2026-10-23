@@ -59,13 +59,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1️⃣ استدعاء دالة الاستعلام مع تمرير المعلمات الثلاث المطلوبة (userLat, userLng, radiusKm)
+    // 1️⃣ استدعاء دالة الاستعلام مع تمرير المعلمات
     let rawPharmacies: PharmacyItem[] = [];
     const queryFn = PharmaciesModule.queryPharmacies || (PharmaciesModule as any).default;
 
     if (typeof queryFn === "function") {
       try {
-        // تمرير الوسائط الثلاثة المطلوبة لمنع خطأ TS2554
         const result = await (queryFn as Function)(userLat, userLng, radiusKm);
         rawPharmacies = Array.isArray(result) ? result : [];
       } catch (err) {
@@ -73,12 +72,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // إذا كانت القائمة لا تزال فارغة، استخراج القائمة كـ Array مباشر
     if (rawPharmacies.length === 0 && Array.isArray((PharmaciesModule as any).pharmacies)) {
       rawPharmacies = (PharmaciesModule as any).pharmacies;
     }
 
-    // 2️⃣ فلترة الصيدليات للتأكد من وجود chat_id وموقع جغرافي صحيح
+    // 2️⃣ فلترة الصيدليات بحسب النطاق الجغرافي والـ chat_id
     const targetPharmacies = rawPharmacies.filter((pharmacy: PharmacyItem) => {
       const chatId = pharmacy.chat_id || pharmacy.chatId;
       const lat = pharmacy.lat || pharmacy.latitude;
@@ -107,12 +105,11 @@ export async function POST(req: NextRequest) {
       { ex: 300 }
     );
 
-    // 4️⃣ تجهيز نص الرسالة بتنسيق HTML معتمد
+    // 4️⃣ النص المختصر المطلوب
     const messageText =
-      `💊 <b>طلب دواء جديد</b>\n\n` +
-      `📦 <b>الدواء:</b> ${medicineName}\n` +
-      `🆔 <b>رقم الطلب:</b> <code>${requestId}</code>\n` +
-      `📍 <b>الموقع:</b> <a href="https://www.google.com/maps?q=${userLat},${userLng}">عرض موقع العميل على الخريطة</a>`;
+      `السلام عليكم ,, \n` +
+      `ممكن اسأل عن توفر (${medicineName})\n` +
+      `شكرا`;
 
     const replyMarkup = {
       inline_keyboard: [
@@ -123,7 +120,7 @@ export async function POST(req: NextRequest) {
       ],
     };
 
-    // 5️⃣ إرسال الطلب إلى التليجرام لجميع الصيدليات النشطة
+    // 5️⃣ إرسال الرسالة لجميع الصيدليات النشطة
     let successCount = 0;
     const sendPromises = activePharmacies.map(async (pharmacy: PharmacyItem) => {
       const chatId = pharmacy.chat_id || pharmacy.chatId;

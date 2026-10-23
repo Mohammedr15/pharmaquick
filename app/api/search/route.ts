@@ -168,7 +168,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("❌ خطأ في api/search:", error);
     return NextResponse.json(
-      { success: false, message: " بحبك يا ركروكتي   " },
+      { success: false, message: "  الخدمة غير مفعلة حاليا بمنطقتك    " },
       { status: 500 }
     );
   }

@@ -1,81 +1,97 @@
-import { NextResponse } from "next/server";
-import { PHARMACIES_DATABASE } from "@/lib/pharmacies";
+import { NextRequest, NextResponse } from "next/server";
+import { Redis } from "@upstash/redis";
 
-export async function POST(request: Request) {
+// تهيئة عميل Upstash Redis باستخدام متغيرات البيئة
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL || "",
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || "",
+});
+
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+
+// دالة مساعدة لإرسال تعديل أو رد على التليجرام
+async function sendTelegramMessage(chatId: number, text: string) {
   try {
-    const body = await request.json();
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: text,
+      }),
+    });
+  } catch (err) {
+    console.error("❌ خطأ في إرسال رسالة التليجرام:", err);
+  }
+}
 
-    if (body && body.callback_query) {
+// دالة للإجابة على Callback Query لإخفاء مؤشر التحميل في التليجرام
+async function answerCallbackQuery(callbackQueryId: string, text: string) {
+  try {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        callback_query_id: callbackQueryId,
+        text: text,
+        show_alert: false,
+      }),
+    });
+  } catch (err) {
+    console.error("❌ خطأ في إجابة CallbackQuery:", err);
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+
+    // 1️⃣ معالجة ضغطات الأزرار من التليجرام (Inline Keyboard Callbacks)
+    if (body.callback_query) {
       const callbackQuery = body.callback_query;
-      const callbackData = (callbackQuery.data as string) || "";
-      const chatId = callbackQuery.message.chat.id;
-      const messageId = callbackQuery.message.message_id;
+      const callbackData = callbackQuery.data; // النمط: "available:REQ_12345" أو "unavailable:REQ_12345"
+      const chatId = callbackQuery.message?.chat?.id;
+      const pharmacyName = callbackQuery.from?.first_name || "صيدلية قريبة";
 
-      // تفكيك البيانات بالفاصل |
-      const parts = callbackData.split("|");
-      const action = parts[0];
-      const requestId = parts[1];
-      const pharmacyId = parts[2];
+      if (callbackData && callbackData.includes(":")) {
+        const [status, requestId] = callbackData.split(":");
 
-      const isAvailable = action === "avail";
-      const statusValue = isAvailable ? "available" : "unavailable";
+        if (requestId && (status === "available" || status === "unavailable")) {
+          // حفظ الحالة في Upstash Redis بمفتاح موحد لمدة 5 دقائق (300 ثانية)
+          const redisKey = `req:${requestId}`;
+          const payload = {
+            status: status,
+            pharmacyName: pharmacyName,
+            updatedAt: Date.now(),
+          };
 
-      let pharmacyName = "صيدلية قريبة";
-      if (pharmacyId) {
-        const matched = PHARMACIES_DATABASE.find((p) => p.id === pharmacyId);
-        if (matched) {
-          pharmacyName = matched.name;
-        }
-      }
+          await redis.set(redisKey, JSON.stringify(payload), { ex: 300 });
 
-      const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
-      const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+          // إشعار الصيدلي في التليجرام بتأكيد تسجيل الرد
+          const statusText = status === "available" ? "🎉 متوفر" : "❌ غير متوفر";
+          await answerCallbackQuery(
+            callbackQuery.id,
+            `تم تسجيل الرد: ${statusText}`
+          );
 
-      // تحديث الحالة في Redis
-      if (redisUrl && redisToken && requestId) {
-        const payloadData = JSON.stringify({
-          status: statusValue,
-          pharmacyName: pharmacyName,
-        });
-
-        await fetch(
-          `${redisUrl}/set/${requestId}/${encodeURIComponent(payloadData)}?EX=7200`,
-          {
-            headers: { Authorization: `Bearer ${redisToken}` },
+          if (chatId) {
+            await sendTelegramMessage(
+              chatId,
+              `✅ تم تحديث حالة الطلب (${requestId}) بنجاح إلى: ${statusText}`
+            );
           }
-        );
-      }
 
-      const botToken = process.env.TELEGRAM_BOT_TOKEN;
-
-      if (botToken) {
-        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            callback_query_id: callbackQuery.id,
-            text: isAvailable ? "تم تسجيل الرد: متوفر 🟢" : "تم تسجيل الرد: غير متوفر 🔴",
-          }),
-        });
-
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            message_id: messageId,
-            text: `تم تسجيل ردك بنجاح:\nحالة الدواء: *${
-              isAvailable ? "✅ متوفر" : "❌ غير متوفر"
-            }*\nالصيدلية: *${pharmacyName}*`,
-            parse_mode: "Markdown",
-          }),
-        });
+          return NextResponse.json({ success: true, message: "State updated successfully" });
+        }
       }
     }
 
-    return NextResponse.json({ ok: true });
-  } catch (error: unknown) {
-    console.error("Webhook Error:", error);
-    return NextResponse.json({ ok: false }, { status: 500 });
+    return NextResponse.json({ success: true, message: "Event ignored" });
+  } catch (error) {
+    console.error("❌ خطأ في استقبال Telegram Webhook:", error);
+    return NextResponse.json(
+      { success: false, message: "Internal server error" },
+      { status: 500 }
+    );
   }
 }

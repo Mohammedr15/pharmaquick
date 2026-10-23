@@ -7,7 +7,7 @@ const redis = new Redis({
 });
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || ""; // أو المعرف الخاص بالجروب/الصيدلية
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
 
 export async function POST(req: NextRequest) {
   try {
@@ -29,13 +29,12 @@ export async function POST(req: NextRequest) {
       { ex: 300 }
     );
 
-    // 2️⃣ تجهيز نص الرسالة وتنسيق الأزرار للتليجرام
-    const messageText = `💊 *طلب دواء جديد*\n\n` +
-      `📦 *الدواء:* ${medicineName}\n` +
-      `🆔 *رقم الطلب:* \`${requestId}\` \n` +
-      `📍 *موقع العميل:* [عرض على الخريطة](https://www.google.com/maps?q=${userLat},${userLng})`;
+    // 2️⃣ تجهيز نص الرسالة وتنسيق الأزرار لتليجرام باستخدام HTML (أكثر آماناً واستقراراً من Markdown)
+    const messageText = `💊 <b>طلب دواء جديد</b>\n\n` +
+      `📦 <b>الدواء:</b> ${medicineName}\n` +
+      `🆔 <b>رقم الطلب:</b> <code>${requestId}</code>\n` +
+      `📍 <b>الموقع:</b> <a href="https://www.google.com/maps?q=${userLat},${userLng}">عرض موقع العميل على الخريطة</a>`;
 
-    // استخدام callback_data قصيرة جداً لضمان عدم تجاوز حد التليجرام (64 Bytes)
     const replyMarkup = {
       inline_keyboard: [
         [
@@ -54,7 +53,7 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           chat_id: TELEGRAM_CHAT_ID,
           text: messageText,
-          parse_mode: "Markdown",
+          parse_mode: "HTML",
           reply_markup: replyMarkup,
         }),
       }
@@ -65,7 +64,10 @@ export async function POST(req: NextRequest) {
     if (!telegramRes.ok || !telegramData.ok) {
       console.error("❌ فشل إرسال الرسالة إلى التليجرام:", telegramData);
       return NextResponse.json(
-        { success: false, message: "فشل إرسال الطلب للصيدليات" },
+        { 
+          success: false, 
+          message: `فشل إرسال الطلب للصيدليات: ${telegramData.description || "خطأ في الاتصال بالبوت"}` 
+        },
         { status: 500 }
       );
     }

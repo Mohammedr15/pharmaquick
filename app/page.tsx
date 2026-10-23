@@ -11,73 +11,99 @@ export default function SearchPage() {
     pharmacyName?: string;
   } | null>(null);
 
-  // موقع العميل الجغرافي (افتراضياً عرعر حتى يتم التقاط الموقع الحقيقي)
+  // سجل التتبع الحي لشاشة الجوال
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+
+  const addLog = (msg: string) => {
+    const time = new Date().toLocaleTimeString("ar-SA");
+    console.log(`[LOG ${time}] ${msg}`);
+    setDebugLogs((prev) => [`[${time}] ${msg}`, ...prev.slice(0, 19)]);
+  };
+
+  // موقع العميل الجغرافي
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number }>({
     lat: 30.9753,
     lng: 41.0381,
   });
-  const [locationStatus, setLocationStatus] = useState("جاري جلب موقعك الجغرافي الحقيقي...");
+  const [locationStatus, setLocationStatus] = useState("جاري جلب موقعك...");
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
-  // 1️⃣ دالة جلب الموقع الجغرافي الحقيقي المخصصة للجوال (باستخدام watchPosition)
+  // 1️⃣ دالة جلب الموقع مع تسجيل خطوات التصحيح
   const requestLocation = useCallback(() => {
+    addLog("🔍 بدء دالة طلب الموقع الجغرافي...");
+
     if (
       typeof window !== "undefined" &&
       window.location.protocol !== "https:" &&
       window.location.hostname !== "localhost"
     ) {
-      setLocationStatus("⚠️ يجب فتح الموقع عبر رابط آمن (HTTPS) لتفعيل الـ GPS");
+      const err = "⚠️ البروتوكول ليس HTTPS (الموقع يحتاج اتصال آمن لتشغيل GPS)";
+      setLocationStatus(err);
+      addLog(err);
       return;
     }
 
     if ("geolocation" in navigator) {
-      setLocationStatus("📡 جاري الاتصال بمستشعر الـ GPS والجوال...");
+      addLog("📡 المستشعر مدعوم، جاري طلب إحداثيات GPS...");
+      setLocationStatus("📡 جاري الاتصال بمستشعر الـ GPS...");
 
-      // إلغاء أي مراقبة سابقة
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
 
-      // استخدام watchPosition لضمان التقاط الإشارة الحقيقية من الجوال
       watchIdRef.current = navigator.geolocation.watchPosition(
         (position) => {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
-          
+          const accuracy = position.coords.accuracy;
+
           setUserCoords({ lat, lng });
-          setLocationStatus(`📍 تم تحديد موقعك الحقيقي بنجاح (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
-          
-          // إيقاف المراقبة بعد أول التقاط ناجح لتوفير البطارية
+          const successMsg = `📍 تم التقاط الموقع: ${lat.toFixed(4)}, ${lng.toFixed(4)} (دقة: ${accuracy.toFixed(0)}m)`;
+          setLocationStatus(successMsg);
+          addLog(successMsg);
+
           if (watchIdRef.current !== null) {
             navigator.geolocation.clearWatch(watchIdRef.current);
             watchIdRef.current = null;
           }
         },
         (error) => {
-          console.warn("⚠️ محاولة جلب الموقع بالدقة العادية للجوال...", error);
-          
-          // المحاولة الثانية بالدقة العادية في حال ضعف التغطية
+          const errCodeMap: Record<number, string> = {
+            1: "تم رفض إذن الوصول للموقع (PERMISSION_DENIED)",
+            2: "فشل تحديد الموقع الفعلي (POSITION_UNAVAILABLE)",
+            3: "انتهت مهلة الانتظار لـ GPS الجوال (TIMEOUT)",
+          };
+          const errorText = errCodeMap[error.code] || error.message;
+          addLog(`❌ خطأ GPS: ${errorText}`);
+
+          addLog("🔄 محاولة جلب الموقع بالدقة التقريبية (Network/Cellular)...");
           navigator.geolocation.getCurrentPosition(
             (pos) => {
               setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-              setLocationStatus("📍 تم تحديد موقعك (دقة تقريبية)");
+              const netMsg = "📍 تم تحديد الموقع عبر الشبكة (تقريبي)";
+              setLocationStatus(netMsg);
+              addLog(netMsg);
             },
-            () => {
-              setLocationStatus("⚠️ تعذر جلب الـ GPS الحقيقي، يُرجى التأكد من تفعيل الموقع في الجوال");
+            (netErr) => {
+              const finalErr = `⚠️ تعذر الجلب التقريبي: ${netErr.message}`;
+              setLocationStatus(finalErr);
+              addLog(finalErr);
             },
             { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
           );
         },
         {
           enableHighAccuracy: true,
-          timeout: 20000, // مهلة 20 ثانية لإعطاء شريحة الجوال فرصة لالتقاط الأقمار
+          timeout: 20000,
           maximumAge: 0,
         }
       );
     } else {
-      setLocationStatus("⚠️ المتصفح لا يدعم تحديد الموقع التلقائي");
+      const noGeo = "⚠️ المتصفح لا يدعم Geolocation API";
+      setLocationStatus(noGeo);
+      addLog(noGeo);
     }
   }, []);
 
@@ -89,9 +115,9 @@ export default function SearchPage() {
     };
   }, [requestLocation]);
 
-  // 2️⃣ دالة الـ Polling القوية لمنع كاش الجوال تماماً
+  // 2️⃣ دالة الاستعلام الدوري مع تسجيل كل استجابة
   const startPolling = (requestId: string) => {
-    console.log("🔍 [DEBUG Frontend] بدء استعلام Polling للجوال لـ ID:", requestId);
+    addLog(`🔄 بدء الـ Polling للطلب ID: ${requestId}`);
 
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -99,22 +125,21 @@ export default function SearchPage() {
 
     pollingIntervalRef.current = setInterval(async () => {
       try {
-        // إضافة رؤوس منع الكاش بشكل كامل مع timestamp فريد
-        const res = await fetch(`/api/check-status?id=${requestId}&nocache=${Date.now()}`, {
+        const url = `/api/check-status?id=${requestId}&_t=${Date.now()}`;
+        const res = await fetch(url, {
           method: "GET",
           headers: {
-            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            Pragma: "no-cache",
           },
           cache: "no-store",
         });
 
         const data = await res.json();
-        console.log("📡 [DEBUG Frontend] الرد القادم من check-status:", data);
+        addLog(`📡 رد check-status: ${JSON.stringify(data)}`);
 
         if (data && data.status === "available") {
-          console.log("🟢 [DEBUG Frontend] تم استلام حالة متوفر!");
+          addLog("🟢 تم اكتشاف حالة متوفر!");
           if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
           setLoading(false);
           setResultData({
@@ -123,7 +148,7 @@ export default function SearchPage() {
           });
           setStatusMessage("🎉 اكتمل البحث!");
         } else if (data && data.status === "unavailable") {
-          console.log("🔴 [DEBUG Frontend] تم استلام حالة غير متوفر!");
+          addLog("🔴 تم اكتشاف حالة غير متوفر!");
           if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
           setLoading(false);
           setResultData({
@@ -132,15 +157,17 @@ export default function SearchPage() {
           });
           setStatusMessage("❌ تم استلام الرد");
         }
-      } catch (err) {
-        console.error("❌ [DEBUG Frontend] خطأ في جلب حالة الطلب:", err);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        addLog(`❌ خطأ أثناء الـ Polling: ${message}`);
       }
-    }, 2000);
+    }, 2500);
 
     setTimeout(() => {
       if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       setLoading((prev) => {
         if (prev) {
+          addLog("⏰ انتهت مهلة الـ 120 ثانية دون تغيير الحالة من pending");
           setStatusMessage("⏰ انتهت مهلة الانتظار، لم ترد الصيدليات القريبة بعد");
           return false;
         }
@@ -161,10 +188,10 @@ export default function SearchPage() {
     setLoading(true);
     setResultData(null);
     setStatusMessage("📡 جاري إرسال الاستعلام للصيدليات القريبة من موقعك...");
+    addLog(`🚀 إرسال طلب الدواء: "${medicineName}" بالتركيب الجغرافي: ${userCoords.lat}, ${userCoords.lng}`);
 
     try {
       const requestId = `REQ_${Date.now()}`;
-      console.log("🚀 [DEBUG Frontend] إرسال طلب جديد بـ ID:", requestId);
 
       const res = await fetch("/api/search", {
         method: "POST",
@@ -179,6 +206,7 @@ export default function SearchPage() {
       });
 
       const data = await res.json();
+      addLog(`📩 استجابة API Search: ${JSON.stringify(data)}`);
 
       if (res.ok && data.success) {
         setStatusMessage(`✅ تم إرسال الطلب إلى ${data.count} صيدلية قريبة! بانتظار الرد...`);
@@ -187,18 +215,19 @@ export default function SearchPage() {
         setLoading(false);
         setStatusMessage(`⚠️ ${data.message || "لم يتم العثور على صيدليات مسجلة ضمن نطاق موقعك"}`);
       }
-    } catch (err) {
-      console.error("❌ [DEBUG Frontend] خطأ في الاتصال بالشبكة:", err);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      addLog(`❌ خطأ في شبكة إرسال الطلب: ${message}`);
       setLoading(false);
       setStatusMessage("❌ حدث خطأ في الاتصال بالشبكة");
     }
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 py-10 px-4 text-gray-900" dir="rtl">
+    <main className="min-h-screen bg-slate-50 py-6 px-4 text-gray-900" dir="rtl">
       <div className="max-w-md mx-auto bg-white rounded-2xl shadow-xl p-6 border border-slate-200 space-y-6">
         
-        {/* العناوين */}
+        {/* العنوان */}
         <div className="text-center space-y-2">
           <h1 className="text-2xl font-bold text-slate-900">PharmaQuick | فارما كويك</h1>
           <p className="text-sm font-semibold text-slate-700">البحث السريع عن الأدوية في الصيدليات القريبة</p>
@@ -212,7 +241,7 @@ export default function SearchPage() {
               onClick={requestLocation}
               className="text-xs font-bold text-blue-600 hover:underline focus:outline-none"
             >
-              🔄 إعادة محاولة جلب الموقع الحقيقي
+              🔄 إعادة محاولة جلب الموقع
             </button>
           </div>
         </div>
@@ -267,6 +296,20 @@ export default function SearchPage() {
             </p>
           </div>
         )}
+
+        {/* 🛠️ شاشة التتبع المباشر (Debug Console) للجوال */}
+        <div className="mt-6 p-3 bg-slate-900 text-green-400 rounded-xl text-xs font-mono dir-ltr text-left space-y-1 max-h-48 overflow-y-auto">
+          <div className="text-slate-400 border-b border-slate-700 pb-1 mb-1 font-bold text-center dir-rtl">
+            🛠️ شاشة تتبع الأخطاء الحية للجوال (Live Debug)
+          </div>
+          {debugLogs.length === 0 && <p className="text-slate-500 text-center">لا توجد سجلات بعد...</p>}
+          {debugLogs.map((log, index) => (
+            <div key={index} className="whitespace-pre-wrap break-all border-b border-slate-800/50 pb-0.5">
+              {log}
+            </div>
+          ))}
+        </div>
+
       </div>
     </main>
   );

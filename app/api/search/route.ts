@@ -1,97 +1,84 @@
-import { NextResponse } from "next/server";
-import { queryPharmacies } from "@/lib/pharmacies";
+import { NextRequest, NextResponse } from "next/server";
+import { Redis } from "@upstash/redis";
 
-export async function POST(request: Request) {
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL || "",
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || "",
+});
+
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || ""; // أو المعرف الخاص بالجروب/الصيدلية
+
+export async function POST(req: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await req.json();
+    const { medicineName, userLat, userLng, requestId } = body;
 
-    const medicineName = body.medicineName || body.medicine || "دواء غير محدد";
-    const userLat = Number(body.userLat || body.lat || 30.9753);
-    const userLng = Number(body.userLng || body.lng || 41.0381);
-    const radiusKm = Number(body.radiusKm || body.radius || 5000);
-    const requestId = body.requestId || `REQ_${Date.now()}`;
-
-    const botToken = process.env.TELEGRAM_BOT_TOKEN;
-    const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
-    const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
-
-    if (!botToken) {
+    if (!medicineName || !requestId) {
       return NextResponse.json(
-        { success: false, message: "توكن البوت غير معرف في متغيرات البيئة" },
+        { success: false, message: "اسم الدواء ورقم الطلب مطلوبان" },
+        { status: 400 }
+      );
+    }
+
+    // 1️⃣ إعداد حالة الطلب الابتدائية في Upstash Redis
+    const redisKey = `req:${requestId}`;
+    await redis.set(
+      redisKey,
+      JSON.stringify({ status: "pending", medicineName }),
+      { ex: 300 }
+    );
+
+    // 2️⃣ تجهيز نص الرسالة وتنسيق الأزرار للتليجرام
+    const messageText = `💊 *طلب دواء جديد*\n\n` +
+      `📦 *الدواء:* ${medicineName}\n` +
+      `🆔 *رقم الطلب:* \`${requestId}\` \n` +
+      `📍 *موقع العميل:* [عرض على الخريطة](https://www.google.com/maps?q=${userLat},${userLng})`;
+
+    // استخدام callback_data قصيرة جداً لضمان عدم تجاوز حد التليجرام (64 Bytes)
+    const replyMarkup = {
+      inline_keyboard: [
+        [
+          { text: "✅ متوفر", callback_data: `avail:${requestId}` },
+          { text: "❌ غير متوفر", callback_data: `unavail:${requestId}` },
+        ],
+      ],
+    };
+
+    // 3️⃣ إرسال الطلب إلى التليجرام
+    const telegramRes = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_CHAT_ID,
+          text: messageText,
+          parse_mode: "Markdown",
+          reply_markup: replyMarkup,
+        }),
+      }
+    );
+
+    const telegramData = await telegramRes.json();
+
+    if (!telegramRes.ok || !telegramData.ok) {
+      console.error("❌ فشل إرسال الرسالة إلى التليجرام:", telegramData);
+      return NextResponse.json(
+        { success: false, message: "فشل إرسال الطلب للصيدليات" },
         { status: 500 }
       );
     }
 
-    const targetPharmacies = queryPharmacies(userLat, userLng, radiusKm);
-
-    if (targetPharmacies.length === 0) {
-      return NextResponse.json({
-        success: false,
-        message: "لا توجد صيدليات مسجلة ضمن النطاق المحدد.",
-      });
-    }
-
-    // 1. تعيين حالة الطلب المبدئية في Redis
-    if (redisUrl && redisToken) {
-      const initialPayload = JSON.stringify({
-        status: "pending",
-        medicineName: medicineName,
-      });
-
-      await fetch(
-        `${redisUrl}/set/${requestId}/${encodeURIComponent(initialPayload)}?EX=7200`,
-        {
-          headers: { Authorization: `Bearer ${redisToken}` },
-        }
-      );
-    }
-
-    // 2. إرسال الرسالة مع الأزرار مفصولة بـ |
-    const sendPromises = targetPharmacies.map(async (pharmacy) => {
-      const messageText =
-        `🔍 *استعلام جديد عن دواء*\n\n` +
-        `💊 اسم الدواء: *${medicineName}*\n` +
-        `📍 المسافة: *${pharmacy.distance.toFixed(1)} كم*\n\n` +
-        `هل الدواء متوفر لديك حالياً؟`;
-
-      const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: pharmacy.chatId,
-          text: messageText,
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [
-              [
-                {
-                  text: "✅ متوفر",
-                  callback_data: `avail|${requestId}|${pharmacy.id}`,
-                },
-                {
-                  text: "❌ غير متوفر",
-                  callback_data: `unavail|${requestId}|${pharmacy.id}`,
-                },
-              ],
-            ],
-          },
-        }),
-      });
-
-      return await res.json();
-    });
-
-    await Promise.all(sendPromises);
-
     return NextResponse.json({
       success: true,
-      requestId: requestId,
-      count: targetPharmacies.length,
+      count: 1,
+      message: "تم إرسال الطلب بنجاح",
     });
-  } catch (error: unknown) {
-    console.error("Search API Error:", error);
+  } catch (error) {
+    console.error("❌ خطأ في api/search:", error);
     return NextResponse.json(
-      { success: false, message: "حدث خطأ أثناء معالجة البحث" },
+      { success: false, message: "خطأ داخلي في السيرفر" },
       { status: 500 }
     );
   }

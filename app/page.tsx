@@ -19,9 +19,9 @@ export default function SearchPage() {
   const [locationStatus, setLocationStatus] = useState("جاري جلب موقعك الجغرافي...");
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const watchIdRef = useRef<number | null>(null);
+  const activeRequestIdRef = useRef<string | null>(null);
 
-  // 1️⃣ دالة جلب الموقع الجغرافي
+  // 1️⃣ دالة جلب الموقع الجغرافي المخصصة لمتصفحات الجوال
   const requestLocation = useCallback(() => {
     if (
       typeof window !== "undefined" &&
@@ -35,26 +35,18 @@ export default function SearchPage() {
     if ("geolocation" in navigator) {
       setLocationStatus("📡 جاري الاتصال بمستشعر الـ GPS...");
 
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-
-      watchIdRef.current = navigator.geolocation.watchPosition(
+      // الاستعلام المباشر الخفيف المتوافق مع محركات Safari/Chrome على الجوال
+      navigator.geolocation.getCurrentPosition(
         (position) => {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
-
           setUserCoords({ lat, lng });
           setLocationStatus("📍 تم تحديد موقعك الجغرافي بنجاح");
-
-          if (watchIdRef.current !== null) {
-            navigator.geolocation.clearWatch(watchIdRef.current);
-            watchIdRef.current = null;
-          }
         },
         (error) => {
           console.warn("⚠️ فشل جلب الموقع عالي الدقة، جاري المحاولة بالدقة العادية...", error);
 
+          // المحاولة الثانية بدقة الشبكة لتفادي الحظر
           navigator.geolocation.getCurrentPosition(
             (pos) => {
               setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
@@ -63,13 +55,13 @@ export default function SearchPage() {
             () => {
               setLocationStatus("⚠️ تعذر تحديد موقع GPS دقيق، تم استخدام الموقع الافتراضي");
             },
-            { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+            { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
           );
         },
         {
           enableHighAccuracy: true,
-          timeout: 20000,
-          maximumAge: 0,
+          timeout: 12000,
+          maximumAge: 60000, // السماح باستخدام آخر موقع ملتقط خلال دقيقة لمنع رفض المتصفح
         }
       );
     } else {
@@ -77,53 +69,55 @@ export default function SearchPage() {
     }
   }, []);
 
-  useEffect(() => {
-    requestLocation();
-    return () => {
-      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-      if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
-    };
-  }, [requestLocation]);
+  // 2️⃣ دالة فحص الحالة المفردة (تُستخدم للـ Polling ولتحديث الصفحة فور العودة إليها)
+  const checkStatusOnce = useCallback(async (requestId: string) => {
+    try {
+      const res = await fetch(`/api/check-status?id=${requestId}&_t=${Date.now()}`, {
+        method: "GET",
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+        },
+        cache: "no-store",
+      });
 
-  // 2️⃣ دالة الـ Polling لكسر كاش الجوال
+      const data = await res.json();
+
+      if (data && data.status === "available") {
+        if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+        setLoading(false);
+        setResultData({
+          status: "available",
+          pharmacyName: data.pharmacyName || "صيدلية قريبة",
+        });
+        setStatusMessage("🎉 اكتمل البحث!");
+        return true;
+      } else if (data && data.status === "unavailable") {
+        if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+        setLoading(false);
+        setResultData({
+          status: "unavailable",
+          pharmacyName: data.pharmacyName || "صيدلية قريبة",
+        });
+        setStatusMessage("❌ تم استلام الرد");
+        return true;
+      }
+    } catch (err) {
+      console.error("❌ خطأ في جلب حالة الطلب:", err);
+    }
+    return false;
+  }, []);
+
+  // 3️⃣ بدء الـ Polling الدوري
   const startPolling = (requestId: string) => {
+    activeRequestIdRef.current = requestId;
+
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
     }
 
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/check-status?id=${requestId}&_t=${Date.now()}`, {
-          method: "GET",
-          headers: {
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            Pragma: "no-cache",
-          },
-          cache: "no-store",
-        });
-
-        const data = await res.json();
-
-        if (data && data.status === "available") {
-          if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-          setLoading(false);
-          setResultData({
-            status: "available",
-            pharmacyName: data.pharmacyName || "صيدلية قريبة",
-          });
-          setStatusMessage("🎉 اكتمل البحث!");
-        } else if (data && data.status === "unavailable") {
-          if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-          setLoading(false);
-          setResultData({
-            status: "unavailable",
-            pharmacyName: data.pharmacyName || "صيدلية قريبة",
-          });
-          setStatusMessage("❌ تم استلام الرد");
-        }
-      } catch (err) {
-        console.error("❌ خطأ في جلب حالة الطلب:", err);
-      }
+    pollingIntervalRef.current = setInterval(() => {
+      checkStatusOnce(requestId);
     }, 2000);
 
     setTimeout(() => {
@@ -138,7 +132,26 @@ export default function SearchPage() {
     }, 120000);
   };
 
-  // 3️⃣ إرسال الطلب
+  // 4️⃣ معالجة العودة للشاشة عند تبديل التطبيقات في الجوال (Resume/Focus)
+  useEffect(() => {
+    requestLocation();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && activeRequestIdRef.current) {
+        // فحص مباشر فور فتح الشاشة لتحديث النتيجة إن كان الصيدلي قد رد في التلجرام
+        checkStatusOnce(activeRequestIdRef.current);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [requestLocation, checkStatusOnce]);
+
+  // 5️⃣ إرسال الطلب
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
 

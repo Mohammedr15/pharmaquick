@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
-import { pharmacies } from "@/lib/pharmacies";
+import * as PharmaciesModule from "@/lib/pharmacies";
+
+// تعريف نمط بيانات الصيدلية لمنع أخطاء TypeScript
+interface PharmacyItem {
+  id?: string;
+  name?: string;
+  chat_id?: string | number;
+  chatId?: string | number;
+  lat?: number;
+  latitude?: number;
+  lng?: number;
+  longitude?: number;
+}
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL || "",
@@ -16,7 +28,7 @@ function calculateDistance(
   lat2: number,
   lon2: number
 ): number {
-  const R = 6371; // نصف قطر الأرض بالكيلومتر
+  const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a =
@@ -49,15 +61,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1️⃣ فلترة الصيدليات الموجودة في lib/pharmacies.ts حسب النطاق الجغرافي
-    const targetPharmacies = pharmacies.filter((pharmacy) => {
-      if (!pharmacy.chat_id || !pharmacy.lat || !pharmacy.lng) return false;
-      const distance = calculateDistance(userLat, userLng, pharmacy.lat, pharmacy.lng);
+    // 1️⃣ استخراج قائمة الصيدليات بأمان سواء كانت Export عادي أو Default أو Async Function
+    let rawPharmacies: PharmacyItem[] = [];
+    const queryFn = PharmaciesModule.queryPharmacies || (PharmaciesModule as any).default;
+
+    if (typeof queryFn === "function") {
+      const result = await queryFn();
+      rawPharmacies = Array.isArray(result) ? result : [];
+    } else if (Array.isArray(queryFn)) {
+      rawPharmacies = queryFn;
+    } else if (Array.isArray((PharmaciesModule as any).pharmacies)) {
+      rawPharmacies = (PharmaciesModule as any).pharmacies;
+    }
+
+    // 2️⃣ فلترة الصيدليات بحسب المحدثات والـ chat_id
+    const targetPharmacies = rawPharmacies.filter((pharmacy: PharmacyItem) => {
+      const chatId = pharmacy.chat_id || pharmacy.chatId;
+      const lat = pharmacy.lat || pharmacy.latitude;
+      const lng = pharmacy.lng || pharmacy.longitude;
+
+      if (!chatId || lat === undefined || lng === undefined) return false;
+      const distance = calculateDistance(userLat, userLng, Number(lat), Number(lng));
       return distance <= radiusKm;
     });
 
-    // في حال عدم وجود صيدليات ضمن النطاق، يتم إرسال الطلب لكافة الصيدليات المسجلة كبديل
-    const activePharmacies = targetPharmacies.length > 0 ? targetPharmacies : pharmacies;
+    // استخدام كافة الصيدليات المتاحة كبديل في حال عدم العثور على صيدليات ضمن النطاق
+    const activePharmacies: PharmacyItem[] =
+      targetPharmacies.length > 0 ? targetPharmacies : rawPharmacies;
 
     if (activePharmacies.length === 0) {
       return NextResponse.json(
@@ -66,7 +96,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2️⃣ إعداد حالة الطلب الابتدائية في Upstash Redis
+    // 3️⃣ إعداد حالة الطلب الابتدائية في Upstash Redis
     const redisKey = `req:${requestId}`;
     await redis.set(
       redisKey,
@@ -74,7 +104,7 @@ export async function POST(req: NextRequest) {
       { ex: 300 }
     );
 
-    // 3️⃣ تجهيز نص الرسالة بتنسيق HTML
+    // 4️⃣ تجهيز نص الرسالة بتنسيق HTML معتمد
     const messageText =
       `💊 <b>طلب دواء جديد</b>\n\n` +
       `📦 <b>الدواء:</b> ${medicineName}\n` +
@@ -90,9 +120,12 @@ export async function POST(req: NextRequest) {
       ],
     };
 
-    // 4️⃣ إرسال الرسالة إلى الصيدليات المحددة عبر chat_id الخاص بكل منها
+    // 5️⃣ إرسال الطلب إلى التليجرام لجميع الصيدليات النشطة
     let successCount = 0;
-    const sendPromises = activePharmacies.map(async (pharmacy) => {
+    const sendPromises = activePharmacies.map(async (pharmacy: PharmacyItem) => {
+      const chatId = pharmacy.chat_id || pharmacy.chatId;
+      if (!chatId) return;
+
       try {
         const res = await fetch(
           `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
@@ -100,7 +133,7 @@ export async function POST(req: NextRequest) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              chat_id: pharmacy.chat_id,
+              chat_id: String(chatId),
               text: messageText,
               parse_mode: "HTML",
               reply_markup: replyMarkup,
@@ -111,10 +144,10 @@ export async function POST(req: NextRequest) {
         if (res.ok && data.ok) {
           successCount++;
         } else {
-          console.error(`❌ فشل الإرسال للصيدلية (${pharmacy.name}):`, data);
+          console.error(`❌ فشل الإرسال للصيدلية (${pharmacy.name || chatId}):`, data);
         }
       } catch (err) {
-        console.error(`❌ خطأ في الاتصال بالصيدلية (${pharmacy.name}):`, err);
+        console.error(`❌ خطأ في الاتصال بالصيدلية (${pharmacy.name || chatId}):`, err);
       }
     });
 

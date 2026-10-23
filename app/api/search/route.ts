@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
 import * as PharmaciesModule from "@/lib/pharmacies";
 
-// تعريف نمط بيانات الصيدلية لمنع أخطاء TypeScript
 interface PharmacyItem {
   id?: string;
   name?: string;
@@ -21,7 +20,6 @@ const redis = new Redis({
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
-// دالة حساب المسافة الجغرافية بالكيلومتر (Haversine Formula)
 function calculateDistance(
   lat1: number,
   lon1: number,
@@ -61,20 +59,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1️⃣ استخراج قائمة الصيدليات بأمان سواء كانت Export عادي أو Default أو Async Function
+    // 1️⃣ استدعاء دالة الاستعلام مع تمرير المعلمات الثلاث المطلوبة (userLat, userLng, radiusKm)
     let rawPharmacies: PharmacyItem[] = [];
     const queryFn = PharmaciesModule.queryPharmacies || (PharmaciesModule as any).default;
 
     if (typeof queryFn === "function") {
-      const result = await queryFn();
-      rawPharmacies = Array.isArray(result) ? result : [];
-    } else if (Array.isArray(queryFn)) {
-      rawPharmacies = queryFn;
-    } else if (Array.isArray((PharmaciesModule as any).pharmacies)) {
+      try {
+        // تمرير الوسائط الثلاثة المطلوبة لمنع خطأ TS2554
+        const result = await (queryFn as Function)(userLat, userLng, radiusKm);
+        rawPharmacies = Array.isArray(result) ? result : [];
+      } catch (err) {
+        console.warn("⚠️ تعذر استدعاء queryPharmacies بالمعلمات الثلاث، جاري استخراج البيانات المباشرة:", err);
+      }
+    }
+
+    // إذا كانت القائمة لا تزال فارغة، استخراج القائمة كـ Array مباشر
+    if (rawPharmacies.length === 0 && Array.isArray((PharmaciesModule as any).pharmacies)) {
       rawPharmacies = (PharmaciesModule as any).pharmacies;
     }
 
-    // 2️⃣ فلترة الصيدليات بحسب المحدثات والـ chat_id
+    // 2️⃣ فلترة الصيدليات للتأكد من وجود chat_id وموقع جغرافي صحيح
     const targetPharmacies = rawPharmacies.filter((pharmacy: PharmacyItem) => {
       const chatId = pharmacy.chat_id || pharmacy.chatId;
       const lat = pharmacy.lat || pharmacy.latitude;
@@ -85,7 +89,6 @@ export async function POST(req: NextRequest) {
       return distance <= radiusKm;
     });
 
-    // استخدام كافة الصيدليات المتاحة كبديل في حال عدم العثور على صيدليات ضمن النطاق
     const activePharmacies: PharmacyItem[] =
       targetPharmacies.length > 0 ? targetPharmacies : rawPharmacies;
 

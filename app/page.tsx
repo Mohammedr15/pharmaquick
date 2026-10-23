@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 export default function SearchPage() {
   const [medicineName, setMedicineName] = useState("");
@@ -17,8 +17,11 @@ export default function SearchPage() {
     lng: 41.0381,
   });
   const [locationStatus, setLocationStatus] = useState("جاري جلب موقعك الجغرافي...");
+  
+  // مرجع لحفظ الـ Interval الخاص بالـ Polling لمنع التداخل
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 1️⃣ دالة جلب الموقع الجغرافي المخصصة للهواتف والـ HTTPS
+  // 1️⃣ دالة جلب الموقع الجغرافي المحسّنة للجوال (تمنع التعليق والرفض عند الـ Refresh)
   const requestLocation = useCallback(() => {
     if (
       typeof window !== "undefined" &&
@@ -41,23 +44,24 @@ export default function SearchPage() {
       };
 
       const handleError = (error: GeolocationPositionError) => {
-        console.warn("⚠️ فشل الاتصال عالي الدقة، جاري المحاولة بالدقة العادية...", error);
+        console.warn("⚠️ محاولة جلب الموقع بالدقة العادية للجوال...", error);
 
-        // محاولة ثانية بالدقة العادية لضمان عمل مستشعرات الجوال
+        // المحاولة الثانية: إلغاء إجهاد المستشعر مع السماح باسترجاع كاش الموقع (maximumAge: 60000)
         navigator.geolocation.getCurrentPosition(
           handleSuccess,
-          () => {
-            setLocationStatus("⚠️ تعذر تحديد موقع GPS دقيق، تم استخدام الموقع الافتراضي");
+          (err) => {
+            console.error("Geolocation fallback error:", err);
+            setLocationStatus("📍 تم اعتماد الموقع الافتراضي (عرعر)");
           },
           { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
         );
       };
 
-      // المحاولة الأولى: دقة عالية مخصصة للجوال
+      // المحاولة الأولى: السماح بذاكرة كاش للموقع مدتها 30 ثانية لتفادي رفض المتصفح عند الريفريش
       navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
         enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0,
+        timeout: 8000,
+        maximumAge: 30000, 
       });
     } else {
       setLocationStatus("⚠️ المتصفح لا يدعم تحديد الموقع التلقائي");
@@ -66,15 +70,22 @@ export default function SearchPage() {
 
   useEffect(() => {
     requestLocation();
+    return () => {
+      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+    };
   }, [requestLocation]);
 
-  // 2️⃣ دالة الـ Polling لكسر كاش الجوال (Anti-Cache)
+  // 2️⃣ دالة الـ Polling المحسّنة بدون كاش لمتصفح الجوال
   const startPolling = (requestId: string) => {
     console.log("🔍 [DEBUG Frontend] بدء استعلام Polling للجوال لـ ID:", requestId);
 
-    const interval = setInterval(async () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+
+    pollingIntervalRef.current = setInterval(async () => {
       try {
-        // استخدام Timestamp متحرك ورؤوس نصوص تمنع تخزين الاستجابة في كاش الجوال
+        // توليد رابط فريد تماماً لمنع متصفح الجوال من قراءة الكاش القديم
         const res = await fetch(`/api/check-status?id=${requestId}&_t=${Date.now()}`, {
           method: "GET",
           headers: {
@@ -87,18 +98,18 @@ export default function SearchPage() {
         const data = await res.json();
         console.log("📡 [DEBUG Frontend] الرد من check-status:", data);
 
-        if (data.status === "available") {
+        if (data && data.status === "available") {
           console.log("🟢 [DEBUG Frontend] تم استلام حالة متوفر!");
-          clearInterval(interval);
+          if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
           setLoading(false);
           setResultData({
             status: "available",
             pharmacyName: data.pharmacyName || "صيدلية قريبة",
           });
           setStatusMessage("🎉 اكتمل البحث!");
-        } else if (data.status === "unavailable") {
+        } else if (data && data.status === "unavailable") {
           console.log("🔴 [DEBUG Frontend] تم استلام حالة غير متوفر!");
-          clearInterval(interval);
+          if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
           setLoading(false);
           setResultData({
             status: "unavailable",
@@ -113,12 +124,16 @@ export default function SearchPage() {
       }
     }, 2000);
 
+    // مهلة إيقاف بعد دقيقتين
     setTimeout(() => {
-      clearInterval(interval);
-      if (loading) {
-        setLoading(false);
-        setStatusMessage("⏰ انتهت مهلة الانتظار، لم ترد الصيدليات القريبة بعد");
-      }
+      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+      setLoading((prevLoading) => {
+        if (prevLoading) {
+          setStatusMessage("⏰ انتهت مهلة الانتظار، لم ترد الصيدليات القريبة بعد");
+          return false;
+        }
+        return false;
+      });
     }, 120000);
   };
 

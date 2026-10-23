@@ -1,34 +1,49 @@
-// lib/pharmacies.ts
-
 export interface Pharmacy {
   id: string;
   name: string;
-  lat: number;
-  lng: number;
-  chatId: string;
-  distance?: number;
+  chat_id: string; // معرف التليجرام الخاص بالصيدلية (أو الجروب)
+  lat: number;     // خط العرض الجغرافي
+  lng: number;     // خط الطول الجغرافي
+  phone?: string;  // رقم الهاتف (اختياري)
 }
 
-export type PharmacyWithDistance = Pharmacy & { distance: number };
-
-export const PHARMACIES_DATABASE: Pharmacy[] = [
+// 📌 قائمة الصيدليات المسجلة في النظام
+export const pharmacies: Pharmacy[] = [
   {
-    id: "pharma_arar_1",
-    name: "صيدلية الدواء - عرعر المركزية",
-    lat: 30.979764,
-    lng: 41.061999,
-    chatId: "1364025965",
+    id: "arar-central",
+    name: "صيدلية الدواء عرعر المركزية",
+    chat_id: "7123456789", // 👈 استبدل هذا بـ Chat ID الحقيقي من التليجرام
+    lat: 30.9753,          // إحداثيات عرعر
+    lng: 41.0381,
+    phone: "0500000000",
   },
   {
-    id: "pharma_belqas_1",
-    name: "صيدلية بلقاس - مصر",
-    lat: 31.2141,
-    lng: 31.3582,
-    chatId: "123456789",
+    id: "pharmacy-2",
+    name: "صيدلية الشفاء",
+    chat_id: "9876543210", // 👈 Chat ID الخاص بالصيدلية الثانية
+    lat: 30.9800,
+    lng: 41.0400,
   },
 ];
 
-export function calculateDistance(
+// 🛠️ دالة الاستعلام الجغرافي المساندة
+export async function queryPharmacies(
+  userLat?: number,
+  userLng?: number,
+  radiusKm: number = 50
+): Promise<Pharmacy[]> {
+  if (!userLat || !userLng) {
+    return pharmacies;
+  }
+
+  // فلترة الصيدليات حسب النطاق الجغرافي
+  return pharmacies.filter((pharmacy) => {
+    const distance = calculateDistance(userLat, userLng, pharmacy.lat, pharmacy.lng);
+    return distance <= radiusKm;
+  });
+}
+
+function calculateDistance(
   lat1: number,
   lon1: number,
   lat2: number,
@@ -47,28 +62,4 @@ export function calculateDistance(
   return R * c;
 }
 
-export function queryPharmacies(
-  userLat: number,
-  userLng: number,
-  radiusKm: number
-): PharmacyWithDistance[] {
-  const results: PharmacyWithDistance[] = [];
-
-  for (const pharmacy of PHARMACIES_DATABASE) {
-    const dist = calculateDistance(
-      userLat,
-      userLng,
-      pharmacy.lat,
-      pharmacy.lng
-    );
-
-    if (dist <= radiusKm) {
-      results.push({
-        ...pharmacy,
-        distance: dist,
-      });
-    }
-  }
-
-  return results;
-}
+export default queryPharmacies;

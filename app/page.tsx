@@ -11,17 +11,17 @@ export default function SearchPage() {
     pharmacyName?: string;
   } | null>(null);
 
-  // موقع العميل الجغرافي (افتراضياً عرعر)
+  // موقع العميل الجغرافي (افتراضياً عرعر حتى يتم التقاط الموقع الحقيقي)
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number }>({
     lat: 30.9753,
     lng: 41.0381,
   });
-  const [locationStatus, setLocationStatus] = useState("جاري جلب موقعك الجغرافي...");
-  
-  // مرجع لحفظ الـ Interval الخاص بالـ Polling لمنع التداخل
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [locationStatus, setLocationStatus] = useState("جاري جلب موقعك الجغرافي الحقيقي...");
 
-  // 1️⃣ دالة جلب الموقع الجغرافي المحسّنة للجوال (تمنع التعليق والرفض عند الـ Refresh)
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const watchIdRef = useRef<number | null>(null);
+
+  // 1️⃣ دالة جلب الموقع الجغرافي الحقيقي المخصصة للجوال (باستخدام watchPosition)
   const requestLocation = useCallback(() => {
     if (
       typeof window !== "undefined" &&
@@ -33,36 +33,49 @@ export default function SearchPage() {
     }
 
     if ("geolocation" in navigator) {
-      setLocationStatus("📡 جاري الاتصال بـ GPS الجوال...");
+      setLocationStatus("📡 جاري الاتصال بمستشعر الـ GPS والجوال...");
 
-      const handleSuccess = (position: GeolocationPosition) => {
-        setUserCoords({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-        setLocationStatus("📍 تم تحديد موقعك الجغرافي بنجاح");
-      };
+      // إلغاء أي مراقبة سابقة
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
 
-      const handleError = (error: GeolocationPositionError) => {
-        console.warn("⚠️ محاولة جلب الموقع بالدقة العادية للجوال...", error);
-
-        // المحاولة الثانية: إلغاء إجهاد المستشعر مع السماح باسترجاع كاش الموقع (maximumAge: 60000)
-        navigator.geolocation.getCurrentPosition(
-          handleSuccess,
-          (err) => {
-            console.error("Geolocation fallback error:", err);
-            setLocationStatus("📍 تم اعتماد الموقع الافتراضي (عرعر)");
-          },
-          { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
-        );
-      };
-
-      // المحاولة الأولى: السماح بذاكرة كاش للموقع مدتها 30 ثانية لتفادي رفض المتصفح عند الريفريش
-      navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
-        enableHighAccuracy: true,
-        timeout: 8000,
-        maximumAge: 30000, 
-      });
+      // استخدام watchPosition لضمان التقاط الإشارة الحقيقية من الجوال
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          
+          setUserCoords({ lat, lng });
+          setLocationStatus(`📍 تم تحديد موقعك الحقيقي بنجاح (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+          
+          // إيقاف المراقبة بعد أول التقاط ناجح لتوفير البطارية
+          if (watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
+          }
+        },
+        (error) => {
+          console.warn("⚠️ محاولة جلب الموقع بالدقة العادية للجوال...", error);
+          
+          // المحاولة الثانية بالدقة العادية في حال ضعف التغطية
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+              setLocationStatus("📍 تم تحديد موقعك (دقة تقريبية)");
+            },
+            () => {
+              setLocationStatus("⚠️ تعذر جلب الـ GPS الحقيقي، يُرجى التأكد من تفعيل الموقع في الجوال");
+            },
+            { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+          );
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 20000, // مهلة 20 ثانية لإعطاء شريحة الجوال فرصة لالتقاط الأقمار
+          maximumAge: 0,
+        }
+      );
     } else {
       setLocationStatus("⚠️ المتصفح لا يدعم تحديد الموقع التلقائي");
     }
@@ -72,10 +85,11 @@ export default function SearchPage() {
     requestLocation();
     return () => {
       if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+      if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
     };
   }, [requestLocation]);
 
-  // 2️⃣ دالة الـ Polling المحسّنة بدون كاش لمتصفح الجوال
+  // 2️⃣ دالة الـ Polling القوية لمنع كاش الجوال تماماً
   const startPolling = (requestId: string) => {
     console.log("🔍 [DEBUG Frontend] بدء استعلام Polling للجوال لـ ID:", requestId);
 
@@ -85,18 +99,19 @@ export default function SearchPage() {
 
     pollingIntervalRef.current = setInterval(async () => {
       try {
-        // توليد رابط فريد تماماً لمنع متصفح الجوال من قراءة الكاش القديم
-        const res = await fetch(`/api/check-status?id=${requestId}&_t=${Date.now()}`, {
+        // إضافة رؤوس منع الكاش بشكل كامل مع timestamp فريد
+        const res = await fetch(`/api/check-status?id=${requestId}&nocache=${Date.now()}`, {
           method: "GET",
           headers: {
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            Pragma: "no-cache",
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
           },
           cache: "no-store",
         });
 
         const data = await res.json();
-        console.log("📡 [DEBUG Frontend] الرد من check-status:", data);
+        console.log("📡 [DEBUG Frontend] الرد القادم من check-status:", data);
 
         if (data && data.status === "available") {
           console.log("🟢 [DEBUG Frontend] تم استلام حالة متوفر!");
@@ -116,19 +131,16 @@ export default function SearchPage() {
             pharmacyName: data.pharmacyName || "صيدلية قريبة",
           });
           setStatusMessage("❌ تم استلام الرد");
-        } else {
-          console.log("⏳ [DEBUG Frontend] بانتظار رد الصيدلي (pending)...");
         }
       } catch (err) {
         console.error("❌ [DEBUG Frontend] خطأ في جلب حالة الطلب:", err);
       }
     }, 2000);
 
-    // مهلة إيقاف بعد دقيقتين
     setTimeout(() => {
       if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-      setLoading((prevLoading) => {
-        if (prevLoading) {
+      setLoading((prev) => {
+        if (prev) {
           setStatusMessage("⏰ انتهت مهلة الانتظار، لم ترد الصيدليات القريبة بعد");
           return false;
         }
@@ -167,7 +179,6 @@ export default function SearchPage() {
       });
 
       const data = await res.json();
-      console.log("📩 [DEBUG Frontend] استجابة API البحث:", data);
 
       if (res.ok && data.success) {
         setStatusMessage(`✅ تم إرسال الطلب إلى ${data.count} صيدلية قريبة! بانتظار الرد...`);
@@ -201,7 +212,7 @@ export default function SearchPage() {
               onClick={requestLocation}
               className="text-xs font-bold text-blue-600 hover:underline focus:outline-none"
             >
-              🔄 إعادة محاولة جلب الموقع
+              🔄 إعادة محاولة جلب الموقع الحقيقي
             </button>
           </div>
         </div>

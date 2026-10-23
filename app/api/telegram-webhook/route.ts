@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
+import * as PharmaciesModule from "@/lib/pharmacies";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
@@ -31,22 +32,56 @@ export async function POST(req: NextRequest) {
 
     if (body.callback_query) {
       const callbackQuery = body.callback_query;
-      const callbackData = callbackQuery.data; // النمط: "avail:REQ_123" أو "unavail:REQ_123"
-      const pharmacyName = callbackQuery.from?.first_name || "صيدلية قريبة";
+      const callbackData = callbackQuery.data; // "avail:REQ_123" أو "unavail:REQ_123"
+      const chatId = callbackQuery.message?.chat?.id;
+      
+      // 1️⃣ البحث عن اسم الصيدلية من ملف pharmacies.ts المطابق لـ chat_id
+      let pharmacyName = "";
+      const queryFn = PharmaciesModule.queryPharmacies || (PharmaciesModule as any).default;
+      let rawPharmacies: any[] = [];
+
+      if (typeof queryFn === "function") {
+        try {
+          const result = await (queryFn as Function)();
+          rawPharmacies = Array.isArray(result) ? result : [];
+        } catch (e) {
+          // تجاهل الخطأ في حال كانت الدالة تتطلب معلمات
+        }
+      }
+
+      if (rawPharmacies.length === 0 && Array.isArray((PharmaciesModule as any).pharmacies)) {
+        rawPharmacies = (PharmaciesModule as any).pharmacies;
+      }
+
+      const matchedPharmacy = rawPharmacies.find(
+        (p) => String(p.chat_id || p.chatId) === String(chatId)
+      );
+
+      // استخدام اسم الصيدلية من الملف، أو الاسم من التليجرام كخيار بديل
+      pharmacyName =
+        matchedPharmacy?.name ||
+        callbackQuery.from?.first_name ||
+        "صيدلية قريبة";
 
       if (callbackData && callbackData.includes(":")) {
         const [action, requestId] = callbackData.split(":");
-        
-        // تحويل الاختصار إلى الحالة المعيارية
-        const status = action === "avail" ? "available" : action === "unavail" ? "unavailable" : null;
+        const status =
+          action === "avail"
+            ? "available"
+            : action === "unavail"
+            ? "unavailable"
+            : null;
 
         if (requestId && status) {
           const statusLabel = status === "available" ? "متوفر 🎉" : "غير متوفر ❌";
 
-          // 1️⃣ إجابة زر التليجرام فوراً بإشعار على الشاشة
-          await answerCallbackQuery(callbackQuery.id, `تم تسجيل الرد: ${statusLabel}`);
+          // إجابة الـ Callback بملء الشاشة للتأكيد
+          await answerCallbackQuery(
+            callbackQuery.id,
+            `تم تسجيل الرد: ${statusLabel}`
+          );
 
-          // 2️⃣ تحديث الحالة في Redis بنفس المفتاح المطلوب في الجوال
+          // حفظ البيانات في Redis مع الاسم المعتمد للصيدلية
           const redisKey = `req:${requestId}`;
           await redis.set(
             redisKey,

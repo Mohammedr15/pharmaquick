@@ -11,11 +11,11 @@ export interface Pharmacy {
 export const pharmacies: Pharmacy[] = [
   {
     id: "arar-central",
-    name: "صيدلية الدواء عرعر المركزية",
-    chat_id: "7123456789", // 👈 استبدل هذا بـ Chat ID الحقيقي من التليجرام
-    lat: 30.9753,          // إحداثيات عرعر
-    lng: 41.0381,
-    phone: "0500000000",
+    name: "صيدلية الدكتور محمد عبد الخالق",
+    chat_id: "1364025965", // 👈 استبدل هذا بـ Chat ID الحقيقي من التليجرام
+    lat: 30.979764,          // إحداثيات عرعر
+    lng: 41.061999,
+    phone: "0565897156",
   },
   {
     id: "pharmacy-2",

@@ -11,7 +11,7 @@ export default function SearchPage() {
     pharmacyName?: string;
   } | null>(null);
 
-  // موقع العميل الجغرافي
+  // موقع العميل الجغرافي (مثبت ومستقر)
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number }>({
     lat: 30.9753,
     lng: 41.0381,
@@ -20,8 +20,9 @@ export default function SearchPage() {
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const activeRequestIdRef = useRef<string | null>(null);
+  const watchIdRef = useRef<number | null>(null);
 
-  // 1️⃣ دالة جلب الموقع الجغرافي المخصصة لمتصفحات الجوال
+  // 1️⃣ إعدادات الـ GPS المثبتة (بدون أي تغيير)
   const requestLocation = useCallback(() => {
     if (
       typeof window !== "undefined" &&
@@ -35,7 +36,6 @@ export default function SearchPage() {
     if ("geolocation" in navigator) {
       setLocationStatus("📡 جاري الاتصال بمستشعر الـ GPS...");
 
-      // الاستعلام المباشر الخفيف المتوافق مع محركات Safari/Chrome على الجوال
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const lat = position.coords.latitude;
@@ -45,8 +45,6 @@ export default function SearchPage() {
         },
         (error) => {
           console.warn("⚠️ فشل جلب الموقع عالي الدقة، جاري المحاولة بالدقة العادية...", error);
-
-          // المحاولة الثانية بدقة الشبكة لتفادي الحظر
           navigator.geolocation.getCurrentPosition(
             (pos) => {
               setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
@@ -61,7 +59,7 @@ export default function SearchPage() {
         {
           enableHighAccuracy: true,
           timeout: 12000,
-          maximumAge: 60000, // السماح باستخدام آخر موقع ملتقط خلال دقيقة لمنع رفض المتصفح
+          maximumAge: 60000,
         }
       );
     } else {
@@ -69,17 +67,21 @@ export default function SearchPage() {
     }
   }, []);
 
-  // 2️⃣ دالة فحص الحالة المفردة (تُستخدم للـ Polling ولتحديث الصفحة فور العودة إليها)
+  // 2️⃣ دالة فحص النتيجة المركزة للموبايل (ضد الكاش مع استجابة فورية)
   const checkStatusOnce = useCallback(async (requestId: string) => {
     try {
+      // معلمة _t تضمن عدم استرجاع نتيجة قديمة من ذاكرة الجوال
       const res = await fetch(`/api/check-status?id=${requestId}&_t=${Date.now()}`, {
         method: "GET",
         headers: {
-          "Cache-Control": "no-cache, no-store, must-revalidate",
-          Pragma: "no-cache",
+          "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+          "Pragma": "no-cache",
+          "Expires": "0",
         },
         cache: "no-store",
       });
+
+      if (!res.ok) return false;
 
       const data = await res.json();
 
@@ -103,12 +105,12 @@ export default function SearchPage() {
         return true;
       }
     } catch (err) {
-      console.error("❌ خطأ في جلب حالة الطلب:", err);
+      console.error("❌ خطأ في جلب حالة الطلب على الجوال:", err);
     }
     return false;
   }, []);
 
-  // 3️⃣ بدء الـ Polling الدوري
+  // 3️⃣ بدء الفحص الدوري (Polling)
   const startPolling = (requestId: string) => {
     activeRequestIdRef.current = requestId;
 
@@ -116,10 +118,15 @@ export default function SearchPage() {
       clearInterval(pollingIntervalRef.current);
     }
 
+    // فحص فوري أولاً
+    checkStatusOnce(requestId);
+
+    // ثم فحص كل ثانية والنصف لسرعة الملاحظة على الجوال
     pollingIntervalRef.current = setInterval(() => {
       checkStatusOnce(requestId);
-    }, 2000);
+    }, 1500);
 
+    // إيقاف تلقائي بعد 120 ثانية
     setTimeout(() => {
       if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       setLoading((prev) => {
@@ -132,24 +139,30 @@ export default function SearchPage() {
     }, 120000);
   };
 
-  // 4️⃣ معالجة العودة للشاشة عند تبديل التطبيقات في الجوال (Resume/Focus)
+  // 4️⃣ الاستجابة الفورية عند العودة من تطبيق تلجرام إلى المتصفح
   useEffect(() => {
     requestLocation();
 
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible" && activeRequestIdRef.current) {
-        // فحص مباشر فور فتح الشاشة لتحديث النتيجة إن كان الصيدلي قد رد في التلجرام
+    const handleFocusOrVisible = () => {
+      if (
+        (document.visibilityState === "visible" || document.hasFocus()) &&
+        activeRequestIdRef.current &&
+        loading
+      ) {
+        // اجبار استعلام مباشر في نفس لحظة فتح الشاشة
         checkStatusOnce(activeRequestIdRef.current);
       }
     };
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener("visibilitychange", handleFocusOrVisible);
+    window.addEventListener("focus", handleFocusOrVisible);
 
     return () => {
       if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener("visibilitychange", handleFocusOrVisible);
+      window.removeEventListener("focus", handleFocusOrVisible);
     };
-  }, [requestLocation, checkStatusOnce]);
+  }, [requestLocation, checkStatusOnce, loading]);
 
   // 5️⃣ إرسال الطلب
   const handleSearch = async (e: React.FormEvent) => {
@@ -249,10 +262,10 @@ export default function SearchPage() {
           </div>
         )}
 
-        {/* بطاقة النتيجة */}
+        {/* بطاقة النتيجة (تظهر فوراً عند تغير الحالة) */}
         {resultData && (
           <div
-            className={`p-5 rounded-2xl border-2 text-center space-y-2 transition-all ${
+            className={`p-5 rounded-2xl border-2 text-center space-y-2 transition-all shadow-md ${
               resultData.status === "available"
                 ? "bg-emerald-50 border-emerald-500 text-emerald-950"
                 : "bg-rose-50 border-rose-500 text-rose-950"

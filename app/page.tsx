@@ -19,11 +19,15 @@ type Result = {
   pharmacyName: string;
 };
 
+// Used only when GPS fails. The UI warns the user when this happens.
 const DEFAULT_COORDS = { lat: 30.9753, lng: 41.0381 };
 const POLL_INTERVAL_MS = 2000;
-const MAX_ATTEMPTS = 60;
+const MAX_ATTEMPTS = 60; // 2 minutes
 const WAIT_SECONDS = (POLL_INTERVAL_MS * MAX_ATTEMPTS) / 1000;
 const RECENT_KEY = "pharmaquick_recent";
+
+// Optional: put your own photo at public/images/hero.jpg (square, ~600x600).
+// If the file does not exist, the built-in illustration is shown instead.
 const HERO_PHOTO_SRC = "/images/hero.jpg";
 
 function getGreeting() {
@@ -59,22 +63,22 @@ const LOCATION_UI: Record<
   LocationState,
   { text: string; tone: "ok" | "warn" | "wait"; retry: boolean }
 > = {
-  loading: { text: "جاري تحديد موقعك الجغرافي تلقائياً...", tone: "wait", retry: false },
-  precise: { text: "تم تحديد موقعك بدقة عالية تلقائياً", tone: "ok", retry: true },
+  loading: { text: "جاري تحديد موقعك...", tone: "wait", retry: false },
+  precise: { text: "تم تحديد موقعك", tone: "ok", retry: true },
   approx: { text: "تم تحديد موقعك (دقة تقريبية)", tone: "ok", retry: true },
   manual: { text: "تم اختيار موقعك يدوياً", tone: "ok", retry: true },
   denied: {
-    text: "إذن الموقع مرفوض في المتصفح. فعّله ثم اضغط «تفعيل الموقع»، أو اختر مدينتك من القائمة.",
+    text: "إذن الموقع مرفوض في المتصفح. فعّله ثم اضغط «تفعيل الموقع»، أو اختر مدينتك من القائمة، وإلا سيتم البحث في المنطقة الافتراضية.",
     tone: "warn",
     retry: true,
   },
   failed: {
-    text: "تعذر تحديد موقعك. تأكد من تشغيل GPS بالجهاز أو اختر مدينتك.",
+    text: "تعذر تحديد موقعك. تأكد من تشغيل خدمة الموقع (GPS) ومن اتصال الإنترنت، أو اختر مدينتك من القائمة، وإلا سيتم البحث في المنطقة الافتراضية.",
     tone: "warn",
     retry: true,
   },
   insecure: {
-    text: "افتح الموقع عبر رابط آمن (HTTPS) ليعمل تحديد الموقع.",
+    text: "افتح الموقع عبر رابط آمن (HTTPS) ليعمل تحديد الموقع، أو اختر مدينتك من القائمة.",
     tone: "warn",
     retry: false,
   },
@@ -85,6 +89,7 @@ const LOCATION_UI: Record<
   },
 };
 
+// Used when GPS is unavailable (denied, desktop without location, etc.)
 const EGYPT_CITIES = [
   { name: "القاهرة", lat: 30.0444, lng: 31.2357 },
   { name: "الجيزة", lat: 30.0131, lng: 31.2089 },
@@ -111,15 +116,14 @@ const EGYPT_CITIES = [
 type Platform = "ios" | "android" | "desktop";
 
 const LOCATION_HELP: Record<Platform, string> = {
-  ios: "على iPhone: اضغط «aA» في شريط العنوان ← «إعدادات الموقع الإلكتروني» ← «الموقع» ← «سماح».",
+  ios: "على iPhone: اضغط «aA» في شريط العنوان ← «إعدادات الموقع الإلكتروني» ← «الموقع» ← «سماح». وتأكد من تشغيل «خدمات الموقع» من الإعدادات ← الخصوصية والأمان.",
   android:
-    "على Android: اضغط أيقونة القفل بجانب الرابط ← «الأذونات» ← «الموقع» ← «سماح».",
+    "على Android: اضغط أيقونة القفل بجانب الرابط ← «الأذونات» ← «الموقع» ← «سماح». وتأكد من تشغيل «الموقع» (GPS) من الإعدادات السريعة.",
   desktop:
-    "على الكمبيوتر: اضغط أيقونة القفل بجانب الرابط ← «الموقع» ← «سماح».",
+    "على الكمبيوتر: اضغط أيقونة القفل بجانب الرابط ← «الموقع» ← «سماح». وإن استمرت المشكلة، فعّل خدمات الموقع من إعدادات النظام (Windows: الخصوصية والأمان ← الموقع).",
 };
 
 function detectPlatform(): Platform {
-  if (typeof window === "undefined") return "desktop";
   const ua = navigator.userAgent;
   if (
     /iPhone|iPad|iPod/i.test(ua) ||
@@ -130,10 +134,14 @@ function detectPlatform(): Platform {
   return "desktop";
 }
 
+// In-app browsers (Telegram, WhatsApp, Facebook, Instagram...) usually never show the
+// location permission prompt, so the button seems to do nothing.
 function isInAppBrowser() {
-  if (typeof window === "undefined") return false;
-  return /FBAN|FBAV|Instagram|Snapchat|TikTok|Messenger|MicroMessenger|Line\//i.test(
-    navigator.userAgent
+  const ua = navigator.userAgent;
+  return (
+    /FBAN|FBAV|Instagram|Snapchat|TikTok|Messenger|MicroMessenger|Line\/|Telegram|WhatsApp/i.test(ua) ||
+    /; wv\)/.test(ua) || // Android WebView
+    (/(iPhone|iPad|iPod)/.test(ua) && !/Safari|CriOS|FxiOS|EdgiOS/.test(ua)) // iOS WebView
   );
 }
 
@@ -232,6 +240,7 @@ function Confetti() {
 function HeroVisual() {
   const [photoOk, setPhotoOk] = useState(false);
 
+  // Use the real photo only if the file exists
   useEffect(() => {
     const img = new Image();
     img.onload = () => setPhotoOk(true);
@@ -268,6 +277,13 @@ function HeroVisual() {
   );
 }
 
+function formatDuration(seconds: number) {
+  if (seconds < 60) return `${seconds} ثانية`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return s ? `${m} دقيقة و${s} ثانية` : `${m} دقيقة`;
+}
+
 export default function SearchPage() {
   const [medicineName, setMedicineName] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
@@ -288,14 +304,24 @@ export default function SearchPage() {
     inApp: false,
   });
   const manualRef = useRef("");
+  const [permState, setPermState] = useState<
+    "granted" | "prompt" | "denied" | "unknown"
+  >("unknown");
+  const [policyBlocked, setPolicyBlocked] = useState(false);
+  const [tried, setTried] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [pageUrl, setPageUrl] = useState("");
 
   const isPollingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const busy = phase === "sending" || phase === "waiting";
 
   useEffect(() => {
     setGreeting(getGreeting());
   }, []);
 
+  // ---------- Recent searches (stored on the device only) ----------
   useEffect(() => {
     try {
       const saved = localStorage.getItem(RECENT_KEY);
@@ -317,7 +343,10 @@ export default function SearchPage() {
     });
   };
 
-  // 🎯 دالة جلب الموقع التلقائي المباشر والمستقر
+  // ---------- Location ----------
+  // Same logic and options as the original code:
+  // 1) high accuracy (timeout 12s, maximumAge 60s)
+  // 2) on failure, standard accuracy (timeout 10s, maximumAge 5 min)
   const requestLocation = useCallback(() => {
     if (
       typeof window !== "undefined" &&
@@ -328,45 +357,81 @@ export default function SearchPage() {
       return;
     }
 
-    if (!("geolocation" in navigator)) {
+    if ("geolocation" in navigator) {
+      setLocationState("loading");
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          manualRef.current = "";
+          setManualCity("");
+          setCoords({ lat, lng });
+          setLocationState("precise");
+        },
+        (error) => {
+          console.warn(
+            "High-accuracy location failed, trying standard accuracy...",
+            error
+          );
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              manualRef.current = "";
+              setManualCity("");
+              setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+              setLocationState("approx");
+            },
+            (err2) => {
+              setLocationState(
+                manualRef.current ? "manual" : err2.code === 1 ? "denied" : "failed"
+              );
+            },
+            { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+          );
+        },
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+      );
+    } else {
       setLocationState("unsupported");
-      return;
     }
-
-    setLocationState("loading");
-
-    // استدعاء مباشر ومستقر بدون تعقيد
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-        manualRef.current = "";
-        setManualCity("");
-        setCoords({ lat, lng });
-        setLocationState("precise");
-      },
-      (error) => {
-        console.warn("⚠️ فشل الإذن عالي الدقة، جاري المحاولة بنمط الخيار الثاني:", error);
-        
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            manualRef.current = "";
-            setManualCity("");
-            setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-            setLocationState("approx");
-          },
-          (err2) => {
-            console.error("❌ تعذر تحديد الموقع تلقائياً:", err2);
-            setLocationState(
-              manualRef.current ? "manual" : err2.code === 1 ? "denied" : "failed"
-            );
-          },
-          { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
-        );
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
   }, []);
+
+  // Read-only diagnostics: what does the browser say about location access?
+  const checkPermission = useCallback(async () => {
+    try {
+      const doc = document as unknown as {
+        permissionsPolicy?: { allowsFeature: (f: string) => boolean };
+        featurePolicy?: { allowsFeature: (f: string) => boolean };
+      };
+      const policy = doc.permissionsPolicy ?? doc.featurePolicy;
+      if (policy) setPolicyBlocked(policy.allowsFeature("geolocation") === false);
+    } catch {
+      /* not supported */
+    }
+    try {
+      const st = await navigator.permissions?.query({
+        name: "geolocation" as PermissionName,
+      });
+      setPermState(st ? (st.state as "granted" | "prompt" | "denied") : "unknown");
+    } catch {
+      setPermState("unknown");
+    }
+  }, []);
+
+  const handleEnableLocation = () => {
+    setTried(true);
+    requestLocation();
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      /* the link is shown, so it can be copied manually */
+    }
+  };
 
   const chooseCity = (name: string) => {
     const city = EGYPT_CITIES.find((c) => c.name === name);
@@ -378,6 +443,7 @@ export default function SearchPage() {
     setLocationState("manual");
   };
 
+  // ---------- Status polling (same endpoint and response shape as before) ----------
   const fetchStatusDirectly = useCallback(async (reqId: string) => {
     try {
       const response = await fetch(
@@ -437,6 +503,7 @@ export default function SearchPage() {
     [fetchStatusDirectly]
   );
 
+  // Elapsed-time counter while waiting
   useEffect(() => {
     if (phase !== "waiting") return;
     setElapsed(0);
@@ -444,15 +511,20 @@ export default function SearchPage() {
     return () => clearInterval(timer);
   }, [phase]);
 
-  // تشغيل دالة تحديد الموقع تلقائياً بمجرد رندر الصفحة
   useEffect(() => {
     setEnv({ platform: detectPlatform(), inApp: isInAppBrowser() });
+    setPageUrl(window.location.href);
     requestLocation();
     return () => {
       isPollingRef.current = false;
     };
   }, [requestLocation]);
 
+  useEffect(() => {
+    checkPermission();
+  }, [locationState, checkPermission]);
+
+  // Refresh immediately when the user returns from Telegram / another app
   useEffect(() => {
     const onVisibilityChange = () => {
       if (
@@ -468,6 +540,7 @@ export default function SearchPage() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [activeRequestId, phase, fetchStatusDirectly]);
 
+  // ---------- Actions ----------
   const runSearch = async (rawName: string) => {
     const name = rawName.trim();
 
@@ -528,6 +601,7 @@ export default function SearchPage() {
     setPhase("idle");
   };
 
+  // Back to the form: keep the text (to edit it) or clear it (new medicine)
   const backToForm = (keepText: boolean) => {
     isPollingRef.current = false;
     setResult(null);
@@ -544,6 +618,14 @@ export default function SearchPage() {
   const locText =
     locationState === "manual" ? `تم اختيار موقعك يدوياً: ${manualCity}` : loc.text;
   const showHelp = locationState === "denied" || locationState === "failed";
+  const permLabel =
+    permState === "granted"
+      ? "مسموح"
+      : permState === "denied"
+        ? "مرفوض"
+        : permState === "prompt"
+          ? "لم يُطلب بعد"
+          : "غير معروف";
   const showCityPicker = ["denied", "failed", "unsupported", "insecure", "manual"].includes(
     locationState
   );
@@ -553,6 +635,7 @@ export default function SearchPage() {
 
   return (
     <main className="min-h-screen bg-[#F3F7F5] text-[#0F2421]">
+      {/* ---------- Header ---------- */}
       <header className="relative overflow-hidden rounded-b-3xl bg-[#E3F1EC] px-4 pb-24 pt-6 text-[#0F2421]">
         <span className="pointer-events-none absolute -start-12 -top-12 h-44 w-44 rounded-full bg-white/60" aria-hidden="true" />
         <span className="pointer-events-none absolute -bottom-16 end-10 h-40 w-40 rounded-full bg-emerald-200/40" aria-hidden="true" />
@@ -584,8 +667,10 @@ export default function SearchPage() {
         </div>
       </header>
 
+      {/* ---------- Main card (overlaps header) ---------- */}
       <div className="mx-auto -mt-16 max-w-md px-4 pb-10">
         <div className="rounded-2xl bg-white p-5 shadow-[0_10px_30px_rgba(10,74,68,0.14)] ring-1 ring-[#DCE8E4] sm:p-6">
+          {/* Form */}
           {showForm && (
             <form onSubmit={handleSubmit} noValidate>
               <label htmlFor="medicine" className="mb-2 block text-base font-bold">
@@ -645,6 +730,7 @@ export default function SearchPage() {
                 </div>
               )}
 
+              {/* Location: quiet when fine, prominent when there is a problem */}
               <div className="mt-5" role="status">
                 <div
                   className={`flex items-start gap-2 text-[0.8rem] ${LOCATION_TONE[loc.tone]}`}
@@ -654,9 +740,7 @@ export default function SearchPage() {
                   {loc.retry && (
                     <button
                       type="button"
-                      onClick={() => {
-                        requestLocation();
-                      }}
+                      onClick={handleEnableLocation}
                       className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-bold underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#0A4A44]"
                     >
                       <Icon name="refresh" className="h-3.5 w-3.5" />
@@ -668,21 +752,51 @@ export default function SearchPage() {
                 </div>
 
                 {showInAppTip && (
-                  <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[0.8rem] leading-relaxed text-amber-900">
-                    يبدو أنك تفتح الموقع من داخل تطبيق (مثل فيسبوك أو إنستغرام). افتح
-                    الرابط في Chrome أو Safari ليعمل تحديد الموقع.
+                  <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-[0.8rem] leading-relaxed text-amber-900">
+                    <p className="font-bold">
+                      أنت تفتح الموقع من داخل تطبيق (مثل تيليجرام أو واتساب أو فيسبوك). هذه
+                      التطبيقات لا تعرض نافذة إذن الموقع.
+                    </p>
+                    <p className="mt-1">انسخ الرابط وافتحه في Chrome أو Safari:</p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <span
+                        dir="ltr"
+                        className="min-w-0 flex-1 truncate rounded bg-white px-2 py-1.5 text-left text-xs"
+                      >
+                        {pageUrl}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={copyLink}
+                        className="shrink-0 rounded-md bg-amber-700 px-3 py-1.5 text-xs font-bold text-white active:scale-95"
+                      >
+                        {copied ? "تم النسخ" : "نسخ الرابط"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {policyBlocked && (
+                  <p className="mt-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-[0.8rem] leading-relaxed text-rose-900">
+                    إعدادات أمان الموقع تمنع استخدام الموقع الجغرافي في هذه الصفحة، لذلك لا تظهر
+                    نافذة الإذن. اختر مدينتك من القائمة.
                   </p>
                 )}
 
                 {showHelp && (
-                  <details className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[0.8rem] text-slate-700">
-                    <summary className="cursor-pointer font-bold text-[#0A4A44]">
-                      كيف أفعّل الموقع؟
-                    </summary>
-                    <p className="mt-2 leading-relaxed">
-                      {LOCATION_HELP[env.platform]}
+                  <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2.5 text-[0.8rem] text-slate-700">
+                    {tried && locationState === "denied" && (
+                      <p className="mb-1.5 font-bold text-rose-800">
+                        المتصفح لن يعرض نافذة الإذن لأنه يحتفظ بقرار الرفض السابق. غيّر الإذن
+                        بالخطوات التالية ثم اضغط «تفعيل الموقع» مجدداً.
+                      </p>
+                    )}
+                    <p className="font-bold text-[#0A4A44]">كيف أفعّل الموقع؟</p>
+                    <p className="mt-1 leading-relaxed">{LOCATION_HELP[env.platform]}</p>
+                    <p className="mt-2 text-xs text-slate-600">
+                      حالة إذن الموقع في متصفحك: <b>{permLabel}</b>
                     </p>
-                  </details>
+                  </div>
                 )}
 
                 {showCityPicker && (
@@ -754,6 +868,7 @@ export default function SearchPage() {
             </form>
           )}
 
+          {/* Sending */}
           {phase === "sending" && (
             <div className="py-10 text-center" role="status" aria-live="polite">
               <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-emerald-100 border-t-[#0A4A44] motion-reduce:animate-none" />
@@ -761,6 +876,7 @@ export default function SearchPage() {
             </div>
           )}
 
+          {/* Waiting */}
           {phase === "waiting" && (
             <div role="status" aria-live="polite">
               <div className="text-center">
@@ -782,6 +898,7 @@ export default function SearchPage() {
                 </p>
               </div>
 
+              {/* Progress steps */}
               <ol className="mt-6 space-y-3 text-sm">
                 <li className="flex items-center gap-3 font-semibold text-emerald-800">
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-700 text-white">
@@ -833,6 +950,7 @@ export default function SearchPage() {
             </div>
           )}
 
+          {/* Result */}
           {phase === "done" && result && (
             <div role="status" aria-live="polite">
               {result.status === "available" ? (
@@ -846,31 +964,57 @@ export default function SearchPage() {
                   </div>
                   <div className="space-y-1 bg-emerald-50 px-5 py-4">
                     <p className="text-sm text-emerald-900">
-                      أكدت <span className="font-bold">{result.pharmacyName}</span> توفر الدواء لديك.
+                      «{medicineName}» متوفر لدى
+                    </p>
+                    <p className="text-xl font-extrabold text-emerald-950">
+                      {result.pharmacyName}
+                    </p>
+                    <p className="pt-2 text-xs leading-relaxed text-emerald-800">
+                      ردّت الصيدلية خلال {formatDuration(elapsed)}. ننصحك بالتأكد من
+                      السعر مع الصيدلية قبل الذهاب.
                     </p>
                   </div>
                 </div>
               ) : (
-                <div className="rounded-2xl border border-rose-300 overflow-hidden">
+                <div className="overflow-hidden rounded-2xl border border-rose-300">
                   <div className="flex items-center gap-3 bg-rose-700 px-5 py-4 text-white">
-                    <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20 text-xl">
-                      ❌
+                    <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20 text-2xl">
+                      😔
                     </span>
-                    <h2 className="text-xl font-extrabold">غير متوفر حالياً</h2>
+                    <h2 className="text-xl font-extrabold">الدواء غير متوفر</h2>
                   </div>
                   <div className="space-y-1 bg-rose-50 px-5 py-4">
                     <p className="text-sm text-rose-900">
-                      أفادت <span className="font-bold">{result.pharmacyName}</span> بعدم توفر الدواء حالياً.
+                      «{medicineName}» غير متوفر لدى
+                    </p>
+                    <p className="text-xl font-extrabold text-rose-950">
+                      {result.pharmacyName}
+                    </p>
+                    <p className="pt-2 text-xs leading-relaxed text-rose-800">
+                      لا تقلق 💙 جرّب الاسم العلمي للدواء أو اسماً تجارياً بديلاً.
                     </p>
                   </div>
                 </div>
               )}
 
-              <div className="mt-5 space-y-3">
+              <div className="mt-4 grid gap-3">
+                {result.status === "unavailable" && (
+                  <button
+                    type="button"
+                    onClick={() => backToForm(true)}
+                    className="min-h-12 w-full rounded-xl bg-[#0A4A44] py-3 text-base font-bold text-white active:scale-[0.98]"
+                  >
+                    جرّب اسماً آخر
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => backToForm(true)}
-                  className="w-full rounded-xl bg-[#0A4A44] py-3.5 font-bold text-white shadow-md active:scale-95"
+                  onClick={() => backToForm(false)}
+                  className={`min-h-12 w-full rounded-xl py-3 text-base font-bold active:scale-[0.98] ${
+                    result.status === "available"
+                      ? "bg-[#0A4A44] text-white"
+                      : "border-2 border-slate-200 text-slate-700"
+                  }`}
                 >
                   بحث عن دواء آخر
                 </button>
@@ -878,6 +1022,60 @@ export default function SearchPage() {
             </div>
           )}
         </div>
+
+        {/* ---------- Idle-only information ---------- */}
+        {phase === "idle" && (
+          <>
+            <ul className="mt-5 grid grid-cols-3 gap-2 text-center text-xs font-semibold text-slate-700">
+              {(
+                [
+                  { icon: "bolt", label: "رد مباشر من الصيدلي" },
+                  { icon: "pin", label: "صيدليات قريبة منك" },
+                  { icon: "shield", label: "بدون تسجيل" },
+                ] as { icon: IconName; label: string }[]
+              ).map((item) => (
+                <li
+                  key={item.label}
+                  className="flex flex-col items-center gap-2 rounded-xl bg-white px-2 py-3 ring-1 ring-[#DCE8E4]"
+                >
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-[#0A4A44]">
+                    <Icon name={item.icon} className="h-5 w-5" />
+                  </span>
+                  {item.label}
+                </li>
+              ))}
+            </ul>
+
+            <section
+              className="mt-5 rounded-2xl bg-white p-5 ring-1 ring-[#DCE8E4]"
+              aria-label="كيف يعمل فارما كويك"
+            >
+              <h2 className="mb-4 text-base font-bold">كيف يعمل؟</h2>
+              <ol className="space-y-4 text-sm leading-relaxed text-slate-700">
+                {[
+                  "اكتب اسم الدواء واضغط «اسأل الصيدليات القريبة».",
+                  "نرسل سؤالك مباشرة إلى الصيدليات القريبة من موقعك.",
+                  "يرد الصيدلي بـ «متوفر» أو «غير متوفر» وتظهر لك النتيجة هنا.",
+                ].map((text, i) => (
+                  <li key={text} className="flex gap-3">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#0A4A44] text-xs font-bold text-white">
+                      {i + 1}
+                    </span>
+                    <span>{text}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          </>
+        )}
+
+        {/* ---------- Footer ---------- */}
+        <footer className="mt-6 space-y-2 text-center text-xs leading-relaxed text-slate-600">
+          <p>نستخدم موقعك فقط لاختيار الصيدليات القريبة، ولا نطلب بياناتك الشخصية.</p>
+          <p className="font-semibold text-slate-600">
+            في الحالات الطارئة اتصل بالإسعاف مباشرة على 123.
+          </p>
+        </footer>
       </div>
     </main>
   );

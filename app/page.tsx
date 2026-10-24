@@ -7,6 +7,8 @@ type LocationState =
   | "precise"
   | "approx"
   | "failed"
+  | "denied"
+  | "manual"
   | "insecure"
   | "unsupported";
 
@@ -62,24 +64,88 @@ const LOCATION_UI: Record<
   { text: string; tone: "ok" | "warn" | "wait"; retry: boolean }
 > = {
   loading: { text: "جاري تحديد موقعك...", tone: "wait", retry: false },
-  precise: { text: "تم تحديد موقعك", tone: "ok", retry: false },
+  precise: { text: "تم تحديد موقعك", tone: "ok", retry: true },
   approx: { text: "تم تحديد موقعك (دقة تقريبية)", tone: "ok", retry: true },
+  manual: { text: "تم اختيار موقعك يدوياً", tone: "ok", retry: true },
+  denied: {
+    text: "إذن الموقع مرفوض في المتصفح. فعّله ثم اضغط «تفعيل الموقع»، أو اختر مدينتك من القائمة.",
+    tone: "warn",
+    retry: true,
+  },
   failed: {
-    text: "تعذر تحديد موقعك. سيتم البحث في المنطقة الافتراضية، فقد لا تكون النتائج قريبة منك.",
+    text: "تعذر تحديد موقعك. تأكد من تشغيل خدمة الموقع (GPS) في جهازك ومن اتصال الإنترنت، أو اختر مدينتك من القائمة.",
     tone: "warn",
     retry: true,
   },
   insecure: {
-    text: "افتح الموقع عبر رابط آمن (HTTPS) ليعمل تحديد الموقع.",
+    text: "افتح الموقع عبر رابط آمن (HTTPS) ليعمل تحديد الموقع، أو اختر مدينتك من القائمة.",
     tone: "warn",
     retry: false,
   },
   unsupported: {
-    text: "المتصفح لا يدعم تحديد الموقع. سيتم البحث في المنطقة الافتراضية.",
+    text: "المتصفح لا يدعم تحديد الموقع. اختر مدينتك من القائمة.",
     tone: "warn",
     retry: false,
   },
 };
+
+// Used when GPS is unavailable (denied, desktop without location, etc.)
+const EGYPT_CITIES = [
+  { name: "القاهرة", lat: 30.0444, lng: 31.2357 },
+  { name: "الجيزة", lat: 30.0131, lng: 31.2089 },
+  { name: "الإسكندرية", lat: 31.2001, lng: 29.9187 },
+  { name: "بورسعيد", lat: 31.2653, lng: 32.3019 },
+  { name: "السويس", lat: 29.9668, lng: 32.5498 },
+  { name: "الإسماعيلية", lat: 30.5965, lng: 32.2715 },
+  { name: "الزقازيق", lat: 30.5877, lng: 31.5021 },
+  { name: "بنها", lat: 30.466, lng: 31.1848 },
+  { name: "طنطا", lat: 30.7865, lng: 31.0004 },
+  { name: "المنصورة", lat: 31.0409, lng: 31.3785 },
+  { name: "دمنهور", lat: 31.0341, lng: 30.4682 },
+  { name: "الفيوم", lat: 29.3084, lng: 30.8428 },
+  { name: "بني سويف", lat: 29.0661, lng: 31.0994 },
+  { name: "المنيا", lat: 28.1099, lng: 30.7503 },
+  { name: "أسيوط", lat: 27.1783, lng: 31.1859 },
+  { name: "سوهاج", lat: 26.5591, lng: 31.6957 },
+  { name: "قنا", lat: 26.1551, lng: 32.716 },
+  { name: "الأقصر", lat: 25.6872, lng: 32.6396 },
+  { name: "أسوان", lat: 24.0889, lng: 32.8998 },
+  { name: "الغردقة", lat: 27.2579, lng: 33.8116 },
+];
+
+type Platform = "ios" | "android" | "desktop";
+
+const LOCATION_HELP: Record<Platform, string> = {
+  ios: "على iPhone: اضغط «aA» في شريط العنوان ← «إعدادات الموقع الإلكتروني» ← «الموقع» ← «سماح». وتأكد من تشغيل «خدمات الموقع» من الإعدادات ← الخصوصية والأمان.",
+  android:
+    "على Android: اضغط أيقونة القفل بجانب الرابط ← «الأذونات» ← «الموقع» ← «سماح». وتأكد من تشغيل «الموقع» (GPS) من الإعدادات السريعة.",
+  desktop:
+    "على الكمبيوتر: اضغط أيقونة القفل بجانب الرابط ← «الموقع» ← «سماح». وإن استمرت المشكلة، فعّل خدمات الموقع من إعدادات النظام (Windows: الخصوصية والأمان ← الموقع).",
+};
+
+function detectPlatform(): Platform {
+  const ua = navigator.userAgent;
+  if (
+    /iPhone|iPad|iPod/i.test(ua) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  )
+    return "ios";
+  if (/Android/i.test(ua)) return "android";
+  return "desktop";
+}
+
+// Facebook / Instagram / TikTok in-app browsers often block location access
+function isInAppBrowser() {
+  return /FBAN|FBAV|Instagram|Snapchat|TikTok|Messenger|MicroMessenger|Line\//i.test(
+    navigator.userAgent
+  );
+}
+
+function getPosition(options: PositionOptions) {
+  return new Promise<GeolocationPosition>((resolve, reject) =>
+    navigator.geolocation.getCurrentPosition(resolve, reject, options)
+  );
+}
 
 const LOCATION_TONE = {
   ok: "text-emerald-800",
@@ -234,6 +300,12 @@ export default function SearchPage() {
 
   const [coords, setCoords] = useState(DEFAULT_COORDS);
   const [locationState, setLocationState] = useState<LocationState>("loading");
+  const [manualCity, setManualCity] = useState("");
+  const [env, setEnv] = useState<{ platform: Platform; inApp: boolean }>({
+    platform: "desktop",
+    inApp: false,
+  });
+  const manualRef = useRef("");
 
   const isPollingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -267,44 +339,83 @@ export default function SearchPage() {
   };
 
   // ---------- Location ----------
-  const requestLocation = useCallback(() => {
-    if (
-      typeof window !== "undefined" &&
-      window.location.protocol !== "https:" &&
-      window.location.hostname !== "localhost"
-    ) {
+  // Fast attempt first (works on desktop and mobile; a 50 km radius needs no GPS precision),
+  // then a high-accuracy retry. Returns the coordinates, or null if unavailable.
+  const requestLocation = useCallback(async (): Promise<{
+    lat: number;
+    lng: number;
+  } | null> => {
+    if (typeof window === "undefined") return null;
+
+    if (!window.isSecureContext && window.location.hostname !== "localhost") {
       setLocationState("insecure");
-      return;
+      return null;
     }
 
     if (!("geolocation" in navigator)) {
       setLocationState("unsupported");
-      return;
+      return null;
     }
 
     setLocationState("loading");
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setCoords({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-        setLocationState("precise");
-      },
-      () => {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-            setLocationState("approx");
-          },
-          () => setLocationState("failed"),
-          { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
-        );
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
-    );
+    const apply = (pos: GeolocationPosition) => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        throw new Error("Invalid coordinates");
+      }
+      const found = { lat: latitude, lng: longitude };
+      manualRef.current = "";
+      setManualCity("");
+      setCoords(found);
+      setLocationState(accuracy <= 1500 ? "precise" : "approx");
+      return found;
+    };
+
+    const fail = (code?: number) =>
+      setLocationState(
+        manualRef.current ? "manual" : code === 1 ? "denied" : "failed"
+      );
+
+    try {
+      return apply(
+        await getPosition({
+          enableHighAccuracy: false,
+          timeout: 10000,
+          maximumAge: 300000,
+        })
+      );
+    } catch (e) {
+      const code = (e as { code?: number })?.code;
+      if (code === 1) {
+        fail(code);
+        return null;
+      }
+    }
+
+    try {
+      return apply(
+        await getPosition({
+          enableHighAccuracy: true,
+          timeout: 20000,
+          maximumAge: 0,
+        })
+      );
+    } catch (e) {
+      fail((e as { code?: number })?.code);
+      return null;
+    }
   }, []);
+
+  const chooseCity = (name: string) => {
+    const city = EGYPT_CITIES.find((c) => c.name === name);
+    if (!city) return;
+    manualRef.current = city.name;
+    setManualCity(city.name);
+    setCoords({ lat: city.lat, lng: city.lng });
+    setInputError("");
+    setLocationState("manual");
+  };
 
   // ---------- Status polling (same endpoint and response shape as before) ----------
   const fetchStatusDirectly = useCallback(async (reqId: string) => {
@@ -375,11 +486,59 @@ export default function SearchPage() {
   }, [phase]);
 
   useEffect(() => {
+    setEnv({ platform: detectPlatform(), inApp: isInAppBrowser() });
     requestLocation();
     return () => {
       isPollingRef.current = false;
     };
   }, [requestLocation]);
+
+  // When the user enables location from the browser settings, pick it up automatically
+  useEffect(() => {
+    let cancelled = false;
+    let status: PermissionStatus | null = null;
+    const onChange = () => {
+      if (status?.state === "granted") requestLocation();
+    };
+    try {
+      navigator.permissions
+        ?.query({ name: "geolocation" as PermissionName })
+        .then((st) => {
+          if (cancelled) return;
+          status = st;
+          st.addEventListener("change", onChange);
+        })
+        .catch(() => {});
+    } catch {
+      /* Permissions API not available */
+    }
+    return () => {
+      cancelled = true;
+      status?.removeEventListener("change", onChange);
+    };
+  }, [requestLocation]);
+
+  // Re-check when the user comes back from the browser/system settings
+  useEffect(() => {
+    if (locationState !== "denied" && locationState !== "failed") return;
+    const recheck = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const st = await navigator.permissions?.query({
+          name: "geolocation" as PermissionName,
+        });
+        if (st && st.state === "granted") requestLocation();
+      } catch {
+        /* ignore */
+      }
+    };
+    document.addEventListener("visibilitychange", recheck);
+    window.addEventListener("focus", recheck);
+    return () => {
+      document.removeEventListener("visibilitychange", recheck);
+      window.removeEventListener("focus", recheck);
+    };
+  }, [locationState, requestLocation]);
 
   // Refresh immediately when the user returns from Telegram / another app
   useEffect(() => {
@@ -414,6 +573,21 @@ export default function SearchPage() {
     setStatusMessage("");
     setPhase("sending");
 
+    // Make sure we have a real location (or a chosen city) before asking pharmacies
+    let searchCoords = coords;
+    if (!["precise", "approx", "manual"].includes(locationState)) {
+      const fresh = await requestLocation();
+      if (fresh) {
+        searchCoords = fresh;
+      } else if (!manualRef.current) {
+        setPhase("idle");
+        setInputError(
+          "حدد موقعك أولاً: فعّل الموقع أو اختر مدينتك من القائمة أدناه."
+        );
+        return;
+      }
+    }
+
     try {
       const requestId = `REQ_${Date.now()}`;
       setActiveRequestId(requestId);
@@ -423,8 +597,8 @@ export default function SearchPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           medicineName: name,
-          userLat: coords.lat,
-          userLng: coords.lng,
+          userLat: searchCoords.lat,
+          userLng: searchCoords.lng,
           radiusKm: 50,
           requestId,
         }),
@@ -472,6 +646,13 @@ export default function SearchPage() {
   };
 
   const loc = LOCATION_UI[locationState];
+  const locText =
+    locationState === "manual" ? `تم اختيار موقعك يدوياً: ${manualCity}` : loc.text;
+  const showHelp = locationState === "denied" || locationState === "failed";
+  const showCityPicker = ["denied", "failed", "unsupported", "insecure", "manual"].includes(
+    locationState
+  );
+  const showInAppTip = env.inApp && !["precise", "approx", "manual"].includes(locationState);
   const progress = Math.min(100, (elapsed / WAIT_SECONDS) * 100);
   const showForm = phase === "idle" || phase === "error" || phase === "timeout";
 
@@ -573,21 +754,70 @@ export default function SearchPage() {
               )}
 
               {/* Location: quiet when fine, prominent when there is a problem */}
-              <div
-                className={`mt-5 flex items-start gap-2 text-[0.8rem] ${LOCATION_TONE[loc.tone]}`}
-                role="status"
-              >
-                <Icon name="pin" className="mt-0.5 h-4 w-4" />
-                <span className="flex-1 leading-relaxed">{loc.text}</span>
-                {loc.retry && (
-                  <button
-                    type="button"
-                    onClick={requestLocation}
-                    className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-bold underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#0A4A44]"
-                  >
-                    <Icon name="refresh" className="h-3.5 w-3.5" />
-                    إعادة المحاولة
-                  </button>
+              <div className="mt-5" role="status">
+                <div
+                  className={`flex items-start gap-2 text-[0.8rem] ${LOCATION_TONE[loc.tone]}`}
+                >
+                  <Icon name="pin" className="mt-0.5 h-4 w-4" />
+                  <span className="flex-1 leading-relaxed">{locText}</span>
+                  {loc.retry && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        requestLocation();
+                      }}
+                      className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-bold underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#0A4A44]"
+                    >
+                      <Icon name="refresh" className="h-3.5 w-3.5" />
+                      {locationState === "approx" || locationState === "precise"
+                        ? "تحديث الموقع"
+                        : "تفعيل الموقع"}
+                    </button>
+                  )}
+                </div>
+
+                {showInAppTip && (
+                  <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[0.8rem] leading-relaxed text-amber-900">
+                    يبدو أنك تفتح الموقع من داخل تطبيق (مثل فيسبوك أو إنستغرام). افتح
+                    الرابط في Chrome أو Safari ليعمل تحديد الموقع.
+                  </p>
+                )}
+
+                {showHelp && (
+                  <details className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[0.8rem] text-slate-700">
+                    <summary className="cursor-pointer font-bold text-[#0A4A44]">
+                      كيف أفعّل الموقع؟
+                    </summary>
+                    <p className="mt-2 leading-relaxed">
+                      {LOCATION_HELP[env.platform]}
+                    </p>
+                  </details>
+                )}
+
+                {showCityPicker && (
+                  <div className="mt-3">
+                    <label
+                      htmlFor="city"
+                      className="mb-1.5 block text-sm font-bold"
+                    >
+                      أو اختر مدينتك
+                    </label>
+                    <select
+                      id="city"
+                      value={manualCity}
+                      onChange={(e) => chooseCity(e.target.value)}
+                      className="w-full rounded-lg border-2 border-slate-300 bg-white px-3 py-2.5 text-base font-semibold focus:border-[#0A4A44] focus:outline-none focus:ring-4 focus:ring-emerald-100"
+                    >
+                      <option value="" disabled>
+                        اختر المدينة
+                      </option>
+                      {EGYPT_CITIES.map((city) => (
+                        <option key={city.name} value={city.name}>
+                          {city.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 )}
               </div>
 

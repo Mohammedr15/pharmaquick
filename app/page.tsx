@@ -89,7 +89,6 @@ const LOCATION_UI: Record<
   },
 };
 
-// Used when GPS is unavailable (denied, desktop without location, etc.)
 const EGYPT_CITIES = [
   { name: "القاهرة", lat: 30.0444, lng: 31.2357 },
   { name: "الجيزة", lat: 30.0131, lng: 31.2089 },
@@ -134,16 +133,9 @@ function detectPlatform(): Platform {
   return "desktop";
 }
 
-// Facebook / Instagram / TikTok in-app browsers often block location access
 function isInAppBrowser() {
   return /FBAN|FBAV|Instagram|Snapchat|TikTok|Messenger|MicroMessenger|Line\//i.test(
     navigator.userAgent
-  );
-}
-
-function getPosition(options: PositionOptions) {
-  return new Promise<GeolocationPosition>((resolve, reject) =>
-    navigator.geolocation.getCurrentPosition(resolve, reject, options)
   );
 }
 
@@ -242,7 +234,6 @@ function Confetti() {
 function HeroVisual() {
   const [photoOk, setPhotoOk] = useState(false);
 
-  // Use the real photo only if the file exists
   useEffect(() => {
     const img = new Image();
     img.onload = () => setPhotoOk(true);
@@ -279,13 +270,6 @@ function HeroVisual() {
   );
 }
 
-function formatDuration(seconds: number) {
-  if (seconds < 60) return `${seconds} ثانية`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return s ? `${m} دقيقة و${s} ثانية` : `${m} دقيقة`;
-}
-
 export default function SearchPage() {
   const [medicineName, setMedicineName] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
@@ -310,13 +294,10 @@ export default function SearchPage() {
   const isPollingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const busy = phase === "sending" || phase === "waiting";
-
   useEffect(() => {
     setGreeting(getGreeting());
   }, []);
 
-  // ---------- Recent searches (stored on the device only) ----------
   useEffect(() => {
     try {
       const saved = localStorage.getItem(RECENT_KEY);
@@ -338,10 +319,6 @@ export default function SearchPage() {
     });
   };
 
-  // ---------- Location ----------
-  // Same logic and options as the original code:
-  // 1) high accuracy (timeout 12s, maximumAge 60s)
-  // 2) on failure, standard accuracy (timeout 10s, maximumAge 5 min)
   const requestLocation = useCallback(() => {
     if (
       typeof window !== "undefined" &&
@@ -365,10 +342,7 @@ export default function SearchPage() {
           setLocationState("precise");
         },
         (error) => {
-          console.warn(
-            "High-accuracy location failed, trying standard accuracy...",
-            error
-          );
+          console.warn("High-accuracy location failed, trying standard accuracy...", error);
           navigator.geolocation.getCurrentPosition(
             (pos) => {
               manualRef.current = "";
@@ -401,7 +375,6 @@ export default function SearchPage() {
     setLocationState("manual");
   };
 
-  // ---------- Status polling (same endpoint and response shape as before) ----------
   const fetchStatusDirectly = useCallback(async (reqId: string) => {
     try {
       const response = await fetch(
@@ -461,7 +434,6 @@ export default function SearchPage() {
     [fetchStatusDirectly]
   );
 
-  // Elapsed-time counter while waiting
   useEffect(() => {
     if (phase !== "waiting") return;
     setElapsed(0);
@@ -477,7 +449,6 @@ export default function SearchPage() {
     };
   }, [requestLocation]);
 
-  // Refresh immediately when the user returns from Telegram / another app
   useEffect(() => {
     const onVisibilityChange = () => {
       if (
@@ -493,7 +464,6 @@ export default function SearchPage() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [activeRequestId, phase, fetchStatusDirectly]);
 
-  // ---------- Actions ----------
   const runSearch = async (rawName: string) => {
     const name = rawName.trim();
 
@@ -554,7 +524,6 @@ export default function SearchPage() {
     setPhase("idle");
   };
 
-  // Back to the form: keep the text (to edit it) or clear it (new medicine)
   const backToForm = (keepText: boolean) => {
     isPollingRef.current = false;
     setResult(null);
@@ -580,7 +549,6 @@ export default function SearchPage() {
 
   return (
     <main className="min-h-screen bg-[#F3F7F5] text-[#0F2421]">
-      {/* ---------- Header ---------- */}
       <header className="relative overflow-hidden rounded-b-3xl bg-[#E3F1EC] px-4 pb-24 pt-6 text-[#0F2421]">
         <span className="pointer-events-none absolute -start-12 -top-12 h-44 w-44 rounded-full bg-white/60" aria-hidden="true" />
         <span className="pointer-events-none absolute -bottom-16 end-10 h-40 w-40 rounded-full bg-emerald-200/40" aria-hidden="true" />
@@ -612,10 +580,8 @@ export default function SearchPage() {
         </div>
       </header>
 
-      {/* ---------- Main card (overlaps header) ---------- */}
       <div className="mx-auto -mt-16 max-w-md px-4 pb-10">
         <div className="rounded-2xl bg-white p-5 shadow-[0_10px_30px_rgba(10,74,68,0.14)] ring-1 ring-[#DCE8E4] sm:p-6">
-          {/* Form */}
           {showForm && (
             <form onSubmit={handleSubmit} noValidate>
               <label htmlFor="medicine" className="mb-2 block text-base font-bold">
@@ -675,7 +641,6 @@ export default function SearchPage() {
                 </div>
               )}
 
-              {/* Location: quiet when fine, prominent when there is a problem */}
               <div className="mt-5" role="status">
                 <div
                   className={`flex items-start gap-2 text-[0.8rem] ${LOCATION_TONE[loc.tone]}`}
@@ -785,7 +750,6 @@ export default function SearchPage() {
             </form>
           )}
 
-          {/* Sending */}
           {phase === "sending" && (
             <div className="py-10 text-center" role="status" aria-live="polite">
               <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-emerald-100 border-t-[#0A4A44] motion-reduce:animate-none" />
@@ -793,7 +757,6 @@ export default function SearchPage() {
             </div>
           )}
 
-          {/* Waiting */}
           {phase === "waiting" && (
             <div role="status" aria-live="polite">
               <div className="text-center">
@@ -815,7 +778,6 @@ export default function SearchPage() {
                 </p>
               </div>
 
-              {/* Progress steps */}
               <ol className="mt-6 space-y-3 text-sm">
                 <li className="flex items-center gap-3 font-semibold text-emerald-800">
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-700 text-white">
@@ -867,7 +829,6 @@ export default function SearchPage() {
             </div>
           )}
 
-          {/* Result */}
           {phase === "done" && result && (
             <div role="status" aria-live="polite">
               {result.status === "available" ? (
@@ -881,57 +842,31 @@ export default function SearchPage() {
                   </div>
                   <div className="space-y-1 bg-emerald-50 px-5 py-4">
                     <p className="text-sm text-emerald-900">
-                      «{medicineName}» متوفر لدى
-                    </p>
-                    <p className="text-xl font-extrabold text-emerald-950">
-                      {result.pharmacyName}
-                    </p>
-                    <p className="pt-2 text-xs leading-relaxed text-emerald-800">
-                      ردّت الصيدلية خلال {formatDuration(elapsed)}. ننصحك بالتأكد من
-                      السعر مع الصيدلية قبل الذهاب.
+                      أكدت <span className="font-bold">{result.pharmacyName}</span> توفر الدواء لديك.
                     </p>
                   </div>
                 </div>
               ) : (
-                <div className="overflow-hidden rounded-2xl border border-rose-300">
+                <div className="rounded-2xl border border-rose-300 overflow-hidden">
                   <div className="flex items-center gap-3 bg-rose-700 px-5 py-4 text-white">
-                    <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20 text-2xl">
-                      😔
+                    <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20 text-xl">
+                      ❌
                     </span>
-                    <h2 className="text-xl font-extrabold">الدواء غير متوفر</h2>
+                    <h2 className="text-xl font-extrabold">غير متوفر حالياً</h2>
                   </div>
                   <div className="space-y-1 bg-rose-50 px-5 py-4">
                     <p className="text-sm text-rose-900">
-                      «{medicineName}» غير متوفر لدى
-                    </p>
-                    <p className="text-xl font-extrabold text-rose-950">
-                      {result.pharmacyName}
-                    </p>
-                    <p className="pt-2 text-xs leading-relaxed text-rose-800">
-                      لا تقلق 💙 جرّب الاسم العلمي للدواء أو اسماً تجارياً بديلاً.
+                      أفادت <span className="font-bold">{result.pharmacyName}</span> بعدم توفر الدواء حالياً.
                     </p>
                   </div>
                 </div>
               )}
 
-              <div className="mt-4 grid gap-3">
-                {result.status === "unavailable" && (
-                  <button
-                    type="button"
-                    onClick={() => backToForm(true)}
-                    className="min-h-12 w-full rounded-xl bg-[#0A4A44] py-3 text-base font-bold text-white active:scale-[0.98]"
-                  >
-                    جرّب اسماً آخر
-                  </button>
-                )}
+              <div className="mt-5 space-y-3">
                 <button
                   type="button"
-                  onClick={() => backToForm(false)}
-                  className={`min-h-12 w-full rounded-xl py-3 text-base font-bold active:scale-[0.98] ${
-                    result.status === "available"
-                      ? "bg-[#0A4A44] text-white"
-                      : "border-2 border-slate-200 text-slate-700"
-                  }`}
+                  onClick={() => backToForm(true)}
+                  className="w-full rounded-xl bg-[#0A4A44] py-3.5 font-bold text-white shadow-md active:scale-95"
                 >
                   بحث عن دواء آخر
                 </button>
@@ -939,60 +874,6 @@ export default function SearchPage() {
             </div>
           )}
         </div>
-
-        {/* ---------- Idle-only information ---------- */}
-        {phase === "idle" && (
-          <>
-            <ul className="mt-5 grid grid-cols-3 gap-2 text-center text-xs font-semibold text-slate-700">
-              {(
-                [
-                  { icon: "bolt", label: "رد مباشر من الصيدلي" },
-                  { icon: "pin", label: "صيدليات قريبة منك" },
-                  { icon: "shield", label: "بدون تسجيل" },
-                ] as { icon: IconName; label: string }[]
-              ).map((item) => (
-                <li
-                  key={item.label}
-                  className="flex flex-col items-center gap-2 rounded-xl bg-white px-2 py-3 ring-1 ring-[#DCE8E4]"
-                >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-[#0A4A44]">
-                    <Icon name={item.icon} className="h-5 w-5" />
-                  </span>
-                  {item.label}
-                </li>
-              ))}
-            </ul>
-
-            <section
-              className="mt-5 rounded-2xl bg-white p-5 ring-1 ring-[#DCE8E4]"
-              aria-label="كيف يعمل فارما كويك"
-            >
-              <h2 className="mb-4 text-base font-bold">كيف يعمل؟</h2>
-              <ol className="space-y-4 text-sm leading-relaxed text-slate-700">
-                {[
-                  "اكتب اسم الدواء واضغط «اسأل الصيدليات القريبة».",
-                  "نرسل سؤالك مباشرة إلى الصيدليات القريبة من موقعك.",
-                  "يرد الصيدلي بـ «متوفر» أو «غير متوفر» وتظهر لك النتيجة هنا.",
-                ].map((text, i) => (
-                  <li key={text} className="flex gap-3">
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#0A4A44] text-xs font-bold text-white">
-                      {i + 1}
-                    </span>
-                    <span>{text}</span>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          </>
-        )}
-
-        {/* ---------- Footer ---------- */}
-        <footer className="mt-6 space-y-2 text-center text-xs leading-relaxed text-slate-600">
-          <p>نستخدم موقعك فقط لاختيار الصيدليات القريبة، ولا نطلب بياناتك الشخصية.</p>
-          <p className="font-semibold text-slate-600">
-            في الحالات الطارئة اتصل بالإسعاف مباشرة على 123.
-          </p>
-        </footer>
       </div>
     </main>
   );

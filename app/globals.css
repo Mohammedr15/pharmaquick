@@ -1,32 +1,19 @@
 @import "tailwindcss";
 
-@layer base {
-  :root {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: #f1f7f4;
+  color: #10231f;
+  /* --font-cairo is defined in layout.tsx; the old rule overrode it with system-ui */
+  font-family: var(--font-cairo), system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
-
-  body {
-    background-color: rgb(2 6 23); /* slate-950 */
-    color: rgb(241 245 249); /* slate-100 */
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-  }
-}
-
-/* تخصيص شريط التمرير (Scrollbar) لتنسيق متناسق مع الداارك مود */
-::-webkit-scrollbar {
-  width: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #020617;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
 }

@@ -19,15 +19,11 @@ type Result = {
   pharmacyName: string;
 };
 
-// Used only when GPS fails. The UI warns the user when this happens.
 const DEFAULT_COORDS = { lat: 30.9753, lng: 41.0381 };
 const POLL_INTERVAL_MS = 2000;
-const MAX_ATTEMPTS = 60; // 2 minutes
+const MAX_ATTEMPTS = 60;
 const WAIT_SECONDS = (POLL_INTERVAL_MS * MAX_ATTEMPTS) / 1000;
 const RECENT_KEY = "pharmaquick_recent";
-
-// Optional: put your own photo at public/images/hero.jpg (square, ~600x600).
-// If the file does not exist, the built-in illustration is shown instead.
 const HERO_PHOTO_SRC = "/images/hero.jpg";
 
 function getGreeting() {
@@ -63,22 +59,22 @@ const LOCATION_UI: Record<
   LocationState,
   { text: string; tone: "ok" | "warn" | "wait"; retry: boolean }
 > = {
-  loading: { text: "جاري تحديد موقعك...", tone: "wait", retry: false },
-  precise: { text: "تم تحديد موقعك", tone: "ok", retry: true },
+  loading: { text: "جاري تحديد موقعك الـ GPS...", tone: "wait", retry: false },
+  precise: { text: "تم تحديد موقعك بدقة عالية (GPS)", tone: "ok", retry: true },
   approx: { text: "تم تحديد موقعك (دقة تقريبية)", tone: "ok", retry: true },
   manual: { text: "تم اختيار موقعك يدوياً", tone: "ok", retry: true },
   denied: {
-    text: "إذن الموقع مرفوض في المتصفح. فعّله ثم اضغط «تفعيل الموقع»، أو اختر مدينتك من القائمة، وإلا سيتم البحث في المنطقة الافتراضية.",
+    text: "إذن الموقع مرفوض في المتصفح. فعّله ثم اضغط «تفعيل الموقع»، أو اختر مدينتك من القائمة.",
     tone: "warn",
     retry: true,
   },
   failed: {
-    text: "تعذر تحديد موقعك. تأكد من تشغيل خدمة الموقع (GPS) ومن اتصال الإنترنت، أو اختر مدينتك من القائمة، وإلا سيتم البحث في المنطقة الافتراضية.",
+    text: "تعذر تحديد موقعك. تأكد من تشغيل خدمة الموقع (GPS) بالهاتف، أو اختر مدينتك.",
     tone: "warn",
     retry: true,
   },
   insecure: {
-    text: "افتح الموقع عبر رابط آمن (HTTPS) ليعمل تحديد الموقع، أو اختر مدينتك من القائمة.",
+    text: "افتح الموقع عبر رابط آمن (HTTPS) ليعمل تحديد الموقع.",
     tone: "warn",
     retry: false,
   },
@@ -115,14 +111,15 @@ const EGYPT_CITIES = [
 type Platform = "ios" | "android" | "desktop";
 
 const LOCATION_HELP: Record<Platform, string> = {
-  ios: "على iPhone: اضغط «aA» في شريط العنوان ← «إعدادات الموقع الإلكتروني» ← «الموقع» ← «سماح». وتأكد من تشغيل «خدمات الموقع» من الإعدادات ← الخصوصية والأمان.",
+  ios: "على iPhone: اضغط «aA» في شريط العنوان ← «إعدادات الموقع الإلكتروني» ← «الموقع» ← «سماح».",
   android:
-    "على Android: اضغط أيقونة القفل بجانب الرابط ← «الأذونات» ← «الموقع» ← «سماح». وتأكد من تشغيل «الموقع» (GPS) من الإعدادات السريعة.",
+    "على Android: اضغط أيقونة القفل بجانب الرابط ← «الأذونات» ← «الموقع» ← «سماح».",
   desktop:
-    "على الكمبيوتر: اضغط أيقونة القفل بجانب الرابط ← «الموقع» ← «سماح». وإن استمرت المشكلة، فعّل خدمات الموقع من إعدادات النظام (Windows: الخصوصية والأمان ← الموقع).",
+    "على الكمبيوتر: اضغط أيقونة القفل بجانب الرابط ← «الموقع» ← «سماح».",
 };
 
 function detectPlatform(): Platform {
+  if (typeof window === "undefined") return "desktop";
   const ua = navigator.userAgent;
   if (
     /iPhone|iPad|iPod/i.test(ua) ||
@@ -134,9 +131,17 @@ function detectPlatform(): Platform {
 }
 
 function isInAppBrowser() {
+  if (typeof window === "undefined") return false;
   return /FBAN|FBAV|Instagram|Snapchat|TikTok|Messenger|MicroMessenger|Line\//i.test(
     navigator.userAgent
   );
+}
+
+// 🎯 دالة الوعد لطلب الـ GPS المباشر والصحيح
+function getPositionPromise(options: PositionOptions): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, options);
+  });
 }
 
 const LOCATION_TONE = {
@@ -319,7 +324,8 @@ export default function SearchPage() {
     });
   };
 
-  const requestLocation = useCallback(() => {
+  // 🎯 دالة طلب الـ GPS المصححة والمضمونة
+  const requestLocation = useCallback(async () => {
     if (
       typeof window !== "undefined" &&
       window.location.protocol !== "https:" &&
@@ -329,39 +335,46 @@ export default function SearchPage() {
       return;
     }
 
-    if ("geolocation" in navigator) {
-      setLocationState("loading");
-
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
-          manualRef.current = "";
-          setManualCity("");
-          setCoords({ lat, lng });
-          setLocationState("precise");
-        },
-        (error) => {
-          console.warn("High-accuracy location failed, trying standard accuracy...", error);
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              manualRef.current = "";
-              setManualCity("");
-              setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-              setLocationState("approx");
-            },
-            (err2) => {
-              setLocationState(
-                manualRef.current ? "manual" : err2.code === 1 ? "denied" : "failed"
-              );
-            },
-            { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
-          );
-        },
-        { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
-      );
-    } else {
+    if (!("geolocation" in navigator)) {
       setLocationState("unsupported");
+      return;
+    }
+
+    setLocationState("loading");
+
+    try {
+      // 1️⃣ المحاولة الأولى بالدقة العالية (GPS)
+      const pos = await getPositionPromise({
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      });
+
+      manualRef.current = "";
+      setManualCity("");
+      setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      setLocationState("precise");
+    } catch (err: any) {
+      console.warn("⚠️ فشل طلب الـ GPS عالي الدقة، جاري تجربة النمط التقريبي...", err);
+
+      try {
+        // 2️⃣ المحاولة الثانية بالدقة التقريبية تلقائياً
+        const pos2 = await getPositionPromise({
+          enableHighAccuracy: false,
+          timeout: 8000,
+          maximumAge: 300000,
+        });
+
+        manualRef.current = "";
+        setManualCity("");
+        setCoords({ lat: pos2.coords.latitude, lng: pos2.coords.longitude });
+        setLocationState("approx");
+      } catch (err2: any) {
+        console.error("❌ تعذر جلب الموقع الجغرافي:", err2);
+        setLocationState(
+          manualRef.current ? "manual" : err2.code === 1 ? "denied" : "failed"
+        );
+      }
     }
   }, []);
 

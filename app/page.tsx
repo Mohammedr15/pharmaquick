@@ -68,12 +68,12 @@ const LOCATION_UI: Record<
   approx: { text: "تم تحديد موقعك (دقة تقريبية)", tone: "ok", retry: true },
   manual: { text: "تم اختيار موقعك يدوياً", tone: "ok", retry: true },
   denied: {
-    text: "إذن الموقع مرفوض في المتصفح. فعّله ثم اضغط «تفعيل الموقع»، أو اختر مدينتك من القائمة.",
+    text: "إذن الموقع مرفوض في المتصفح. فعّله ثم اضغط «تفعيل الموقع»، أو اختر مدينتك من القائمة، وإلا سيتم البحث في المنطقة الافتراضية.",
     tone: "warn",
     retry: true,
   },
   failed: {
-    text: "تعذر تحديد موقعك. تأكد من تشغيل خدمة الموقع (GPS) في جهازك ومن اتصال الإنترنت، أو اختر مدينتك من القائمة.",
+    text: "تعذر تحديد موقعك. تأكد من تشغيل خدمة الموقع (GPS) ومن اتصال الإنترنت، أو اختر مدينتك من القائمة، وإلا سيتم البحث في المنطقة الافتراضية.",
     tone: "warn",
     retry: true,
   },
@@ -339,71 +339,55 @@ export default function SearchPage() {
   };
 
   // ---------- Location ----------
-  // Fast attempt first (works on desktop and mobile; a 50 km radius needs no GPS precision),
-  // then a high-accuracy retry. Returns the coordinates, or null if unavailable.
-  const requestLocation = useCallback(async (): Promise<{
-    lat: number;
-    lng: number;
-  } | null> => {
-    if (typeof window === "undefined") return null;
-
-    if (!window.isSecureContext && window.location.hostname !== "localhost") {
+  // Same logic and options as the original code:
+  // 1) high accuracy (timeout 12s, maximumAge 60s)
+  // 2) on failure, standard accuracy (timeout 10s, maximumAge 5 min)
+  const requestLocation = useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      window.location.protocol !== "https:" &&
+      window.location.hostname !== "localhost"
+    ) {
       setLocationState("insecure");
-      return null;
+      return;
     }
 
-    if (!("geolocation" in navigator)) {
+    if ("geolocation" in navigator) {
+      setLocationState("loading");
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          manualRef.current = "";
+          setManualCity("");
+          setCoords({ lat, lng });
+          setLocationState("precise");
+        },
+        (error) => {
+          console.warn(
+            "High-accuracy location failed, trying standard accuracy...",
+            error
+          );
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              manualRef.current = "";
+              setManualCity("");
+              setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+              setLocationState("approx");
+            },
+            (err2) => {
+              setLocationState(
+                manualRef.current ? "manual" : err2.code === 1 ? "denied" : "failed"
+              );
+            },
+            { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+          );
+        },
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+      );
+    } else {
       setLocationState("unsupported");
-      return null;
-    }
-
-    setLocationState("loading");
-
-    const apply = (pos: GeolocationPosition) => {
-      const { latitude, longitude, accuracy } = pos.coords;
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-        throw new Error("Invalid coordinates");
-      }
-      const found = { lat: latitude, lng: longitude };
-      manualRef.current = "";
-      setManualCity("");
-      setCoords(found);
-      setLocationState(accuracy <= 1500 ? "precise" : "approx");
-      return found;
-    };
-
-    const fail = (code?: number) =>
-      setLocationState(
-        manualRef.current ? "manual" : code === 1 ? "denied" : "failed"
-      );
-
-    try {
-      return apply(
-        await getPosition({
-          enableHighAccuracy: false,
-          timeout: 10000,
-          maximumAge: 300000,
-        })
-      );
-    } catch (e) {
-      const code = (e as { code?: number })?.code;
-      if (code === 1) {
-        fail(code);
-        return null;
-      }
-    }
-
-    try {
-      return apply(
-        await getPosition({
-          enableHighAccuracy: true,
-          timeout: 20000,
-          maximumAge: 0,
-        })
-      );
-    } catch (e) {
-      fail((e as { code?: number })?.code);
-      return null;
     }
   }, []);
 
@@ -493,53 +477,6 @@ export default function SearchPage() {
     };
   }, [requestLocation]);
 
-  // When the user enables location from the browser settings, pick it up automatically
-  useEffect(() => {
-    let cancelled = false;
-    let status: PermissionStatus | null = null;
-    const onChange = () => {
-      if (status?.state === "granted") requestLocation();
-    };
-    try {
-      navigator.permissions
-        ?.query({ name: "geolocation" as PermissionName })
-        .then((st) => {
-          if (cancelled) return;
-          status = st;
-          st.addEventListener("change", onChange);
-        })
-        .catch(() => {});
-    } catch {
-      /* Permissions API not available */
-    }
-    return () => {
-      cancelled = true;
-      status?.removeEventListener("change", onChange);
-    };
-  }, [requestLocation]);
-
-  // Re-check when the user comes back from the browser/system settings
-  useEffect(() => {
-    if (locationState !== "denied" && locationState !== "failed") return;
-    const recheck = async () => {
-      if (document.visibilityState !== "visible") return;
-      try {
-        const st = await navigator.permissions?.query({
-          name: "geolocation" as PermissionName,
-        });
-        if (st && st.state === "granted") requestLocation();
-      } catch {
-        /* ignore */
-      }
-    };
-    document.addEventListener("visibilitychange", recheck);
-    window.addEventListener("focus", recheck);
-    return () => {
-      document.removeEventListener("visibilitychange", recheck);
-      window.removeEventListener("focus", recheck);
-    };
-  }, [locationState, requestLocation]);
-
   // Refresh immediately when the user returns from Telegram / another app
   useEffect(() => {
     const onVisibilityChange = () => {
@@ -573,21 +510,6 @@ export default function SearchPage() {
     setStatusMessage("");
     setPhase("sending");
 
-    // Make sure we have a real location (or a chosen city) before asking pharmacies
-    let searchCoords = coords;
-    if (!["precise", "approx", "manual"].includes(locationState)) {
-      const fresh = await requestLocation();
-      if (fresh) {
-        searchCoords = fresh;
-      } else if (!manualRef.current) {
-        setPhase("idle");
-        setInputError(
-          "حدد موقعك أولاً: فعّل الموقع أو اختر مدينتك من القائمة أدناه."
-        );
-        return;
-      }
-    }
-
     try {
       const requestId = `REQ_${Date.now()}`;
       setActiveRequestId(requestId);
@@ -597,8 +519,8 @@ export default function SearchPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           medicineName: name,
-          userLat: searchCoords.lat,
-          userLng: searchCoords.lng,
+          userLat: coords.lat,
+          userLng: coords.lng,
           radiusKm: 50,
           requestId,
         }),

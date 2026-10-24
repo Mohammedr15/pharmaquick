@@ -59,8 +59,8 @@ const LOCATION_UI: Record<
   LocationState,
   { text: string; tone: "ok" | "warn" | "wait"; retry: boolean }
 > = {
-  loading: { text: "جاري تحديد موقعك الـ GPS...", tone: "wait", retry: false },
-  precise: { text: "تم تحديد موقعك بدقة عالية (GPS)", tone: "ok", retry: true },
+  loading: { text: "جاري تحديد موقعك الجغرافي تلقائياً...", tone: "wait", retry: false },
+  precise: { text: "تم تحديد موقعك بدقة عالية تلقائياً", tone: "ok", retry: true },
   approx: { text: "تم تحديد موقعك (دقة تقريبية)", tone: "ok", retry: true },
   manual: { text: "تم اختيار موقعك يدوياً", tone: "ok", retry: true },
   denied: {
@@ -69,7 +69,7 @@ const LOCATION_UI: Record<
     retry: true,
   },
   failed: {
-    text: "تعذر تحديد موقعك. تأكد من تشغيل خدمة الموقع (GPS) بالهاتف، أو اختر مدينتك.",
+    text: "تعذر تحديد موقعك. تأكد من تشغيل GPS بالجهاز أو اختر مدينتك.",
     tone: "warn",
     retry: true,
   },
@@ -135,13 +135,6 @@ function isInAppBrowser() {
   return /FBAN|FBAV|Instagram|Snapchat|TikTok|Messenger|MicroMessenger|Line\//i.test(
     navigator.userAgent
   );
-}
-
-// 🎯 دالة الوعد لطلب الـ GPS المباشر والصحيح
-function getPositionPromise(options: PositionOptions): Promise<GeolocationPosition> {
-  return new Promise((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(resolve, reject, options);
-  });
 }
 
 const LOCATION_TONE = {
@@ -324,8 +317,8 @@ export default function SearchPage() {
     });
   };
 
-  // 🎯 دالة طلب الـ GPS المصححة والمضمونة
-  const requestLocation = useCallback(async () => {
+  // 🎯 دالة جلب الموقع التلقائي المباشر والمستقر
+  const requestLocation = useCallback(() => {
     if (
       typeof window !== "undefined" &&
       window.location.protocol !== "https:" &&
@@ -342,40 +335,37 @@ export default function SearchPage() {
 
     setLocationState("loading");
 
-    try {
-      // 1️⃣ المحاولة الأولى بالدقة العالية (GPS)
-      const pos = await getPositionPromise({
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
-      });
-
-      manualRef.current = "";
-      setManualCity("");
-      setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      setLocationState("precise");
-    } catch (err: any) {
-      console.warn("⚠️ فشل طلب الـ GPS عالي الدقة، جاري تجربة النمط التقريبي...", err);
-
-      try {
-        // 2️⃣ المحاولة الثانية بالدقة التقريبية تلقائياً
-        const pos2 = await getPositionPromise({
-          enableHighAccuracy: false,
-          timeout: 8000,
-          maximumAge: 300000,
-        });
-
+    // استدعاء مباشر ومستقر بدون تعقيد
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
         manualRef.current = "";
         setManualCity("");
-        setCoords({ lat: pos2.coords.latitude, lng: pos2.coords.longitude });
-        setLocationState("approx");
-      } catch (err2: any) {
-        console.error("❌ تعذر جلب الموقع الجغرافي:", err2);
-        setLocationState(
-          manualRef.current ? "manual" : err2.code === 1 ? "denied" : "failed"
+        setCoords({ lat, lng });
+        setLocationState("precise");
+      },
+      (error) => {
+        console.warn("⚠️ فشل الإذن عالي الدقة، جاري المحاولة بنمط الخيار الثاني:", error);
+        
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            manualRef.current = "";
+            setManualCity("");
+            setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+            setLocationState("approx");
+          },
+          (err2) => {
+            console.error("❌ تعذر تحديد الموقع تلقائياً:", err2);
+            setLocationState(
+              manualRef.current ? "manual" : err2.code === 1 ? "denied" : "failed"
+            );
+          },
+          { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
         );
-      }
-    }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
   }, []);
 
   const chooseCity = (name: string) => {
@@ -454,6 +444,7 @@ export default function SearchPage() {
     return () => clearInterval(timer);
   }, [phase]);
 
+  // تشغيل دالة تحديد الموقع تلقائياً بمجرد رندر الصفحة
   useEffect(() => {
     setEnv({ platform: detectPlatform(), inApp: isInAppBrowser() });
     requestLocation();
